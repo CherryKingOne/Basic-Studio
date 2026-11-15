@@ -63,9 +63,7 @@ crates/
 │  ── 以下为各推理引擎适配器（Rust 侧，只负责协议翻译与生命周期）──
 ├── engine-vllm/            # vLLM 适配器（OpenAI HTTP 透传 + 启动参数拼装）
 ├── engine-sglang/          # SGLang 适配器（OpenAI + /generate）
-├── engine-transformers/    # Transformers sidecar 适配器（HTTP/WS）
-├── engine-indextts/        # IndexTTS sidecar 适配器（PCM 流式）
-├── engine-native/          # candle / ort / llama.cpp 进程内后端
+└── engine-transformers/    # Transformers sidecar 适配器（HTTP/WS；IndexTTS 等模型走此通道）
 │
 ├── studio-router/          # (model, task) → 引擎候选 → 打分 → 重试/故障转移
 ├── studio-scheduler/       # 准入控制、优先级队列、并发上限、取消传播、背压
@@ -89,9 +87,8 @@ crates/
 studio-cli ─┐
 studio-server ─┴─▶ studio-gateway ─▶ studio-scheduler ─▶ studio-router ─▶ studio-engine
                                                                      │
-                                          ┌──────────────────────────┤
+                                          ┌──────────────────────┤
                                     engine-vllm  engine-sglang  engine-transformers
-                                    engine-indextts  engine-native
                                                                      │
                                           studio-core ◀── 所有 crate（只被依赖）
 ```
@@ -103,7 +100,7 @@ studio-server ─┴─▶ studio-gateway ─▶ studio-scheduler ─▶ studio-
 | # | 位置 | 内容 |
 | --- | --- | --- |
 | ① 适配器 | `crates/engine-<name>/` | Rust 代码：启动参数、健康检查、协议翻译、流式转发 |
-| ② 运行时 | `envs/<name>/`（venv）或 `sidecars/`（Python 包） | 引擎真正的代码与依赖（vLLM / SGLang / transformers / indextts） |
+| ② 运行时 | `envs/<name>/`（venv）或 `sidecars/`（Python 包） | 引擎真正的代码与依赖（vLLM / SGLang / transformers） |
 | ③ 清单 | `config/engines/<name>.toml` | 启动命令模板、超时、并发、健康检查路径 |
 
 具体对应：
@@ -112,12 +109,14 @@ studio-server ─┴─▶ studio-gateway ─▶ studio-scheduler ─▶ studio-
 | --- | --- | --- | --- |
 | vLLM | `crates/engine-vllm` | `envs/vllm`（pip 安装的 vllm 命令） | `config/engines/vllm.toml` |
 | SGLang | `crates/engine-sglang` | `envs/sglang`（`python -m sglang.launch_server`） | `config/engines/sglang.toml` |
-| Transformers | `crates/engine-transformers` | `sidecars/studio_sidecar/adapters/transformers_llm.py`，跑在 `envs/transformers` | `config/engines/transformers.toml` |
-| IndexTTS 1.0/1.5/2.0/2.5 | `crates/engine-indextts` | `sidecars/studio_sidecar/adapters/indextts_v*.py`，跑在 `envs/indextts` | `config/engines/indextts.toml` |
-| Native（candle/ort/llama.cpp） | `crates/engine-native` | **进程内**，无外部运行时 | `config/engines/native.toml` |
-| llama.cpp | `crates/engine-native`（或后续独立 crate） | `envs/llamacpp`（`llama-server` 二进制） | `config/engines/llamacpp.toml` |
+| Transformers | `crates/engine-transformers` | `sidecars/studio_sidecar/`，跑在 `envs/transformers` | `config/engines/transformers.toml` |
 
-一句话：**Rust 里是"适配器"，`envs/` 与 `sidecars/` 里是"引擎本体"，`config/engines/` 里是"怎么启动"。**
+> **引擎只有上面这 3 个。** IndexTTS / Laya / Kev 是**模型**，不是引擎：
+> 它们由这些引擎加载执行。IndexTTS 属于 TTS 模型族，通过 `engine-transformers` 的 sidecar 加载，
+> 具体用哪个版本适配器由 `models/tts/<model>/model.toml` 的 `adapter` 字段决定
+> （如 `adapter = "indextts_v25"` → `sidecars/studio_sidecar/adapters/indextts_v25.py`）。
+
+一句话：**Rust 里是"适配器"，`envs/` 与 `sidecars/` 里是"引擎本体"，`config/engines/` 里是"怎么启动"，`models/` 里是"跑什么模型"。**
 
 ## 3. `sidecars/`（Python 侧）
 
@@ -132,12 +131,12 @@ sidecars/
 │   ├── protocol.py             # 与 Rust 共享的请求/响应 schema（pydantic）
 │   ├── server.py               # FastAPI + uvicorn 统一入口，路由 /health /infer /stream
 │   ├── adapters/
-│   │   ├── transformers_llm.py # text-generation / embeddings
-│   │   ├── indextts_v1.py      # index-tts 1.0
-│   │   ├── indextts_v15.py     # index-tts 1.5
-│   │   ├── indextts_v20.py     # index-tts 2.0（情感控制参数）
-│   │   ├── indextts_v25.py     # index-tts 2.5
-│   │   └── dm_laya.py          # 决策模型 Laya 推理封装
+│   │   ├── transformers_llm.py # Transformers：text-generation / embeddings
+│   │   ├── indextts_v1.py      # ┐
+│   │   ├── indextts_v15.py     # │ IndexTTS 模型族的版本适配器（不是引擎，
+│   │   ├── indextts_v20.py     # │ 由 model.toml 的 adapter 字段选择）
+│   │   ├── indextts_v25.py     # ┘
+│   │   └── dm_laya.py          # 决策模型 Laya 的 sidecar 封装（可选）
 │   └── audio/
 │       ├── pcm.py              # 分块 PCM / 重采样 / 削波保护
 │       └── ffmpeg.py           # 需要 mp3/opus 时的转码
@@ -193,13 +192,15 @@ models/tts/index-tts2.0/
 
 ```toml
 id = "tts/index-tts2.0"
-family = "indextts"
+family = "indextts"                      # 模型族（不是引擎）
 task = "tts"
 params_b = 0.5
 dtype = "bfloat16"
 min_vram_gb = 6
-recommended = { engine = "indextts", api_version = "v20" }
-engines = ["indextts"]                 # 可降级顺序
+engine = "transformers"                  # ★ 由哪个引擎加载
+adapter = "indextts_v20"                 # ★ sidecar 内用哪个版本适配器
+api_version = "v20"                      # sidecar 协议版本
+engines = ["transformers"]               # 可降级顺序
 streaming = true
 [limits]
 max_text_chars = 5000
@@ -216,14 +217,16 @@ policy = "warn"                        # warn | enforce
 id = "tts/index-tts1.5"
 path = "tts/index-tts1.5"
 enabled = true
-engines = ["indextts"]
-default_engine = "indextts"
+engine = "transformers"
+adapter = "indextts_v15"
+engines = ["transformers"]
+default_engine = "transformers"
 
 [[models]]
 id = "dm/laya"
 path = "DM/laya"
 enabled = false                        # 按需启用
-engines = ["native", "vllm"]           # 优先进程内，其次 vLLM
+engines = ["vllm"]                     # 可降级顺序；DM 模型按体积选择 vLLM 或 transformers
 ```
 
 ## 5. `envs/`（每引擎独立 Python 环境）
@@ -232,9 +235,12 @@ engines = ["native", "vllm"]           # 优先进程内，其次 vLLM
 envs/
 ├── vllm/          # python3.11 + vllm（CUDA 12.x）
 ├── sglang/        # python3.11 + sglang
-├── transformers/  # python3.11 + transformers + torch
-└── indextts/      # python3.11 + indextts 依赖（版本按模型区分）
+└── transformers/  # python3.11 + transformers + torch（IndexTTS 等模型也在此环境）
 ```
+
+> `envs/` 是**引擎运行环境**，只有上面三个（每个引擎一个，避免 torch 版本冲突）。
+> 模型不需要自己的环境；IndexTTS 各版本共用 `envs/transformers`，版本差异由 `adapters/indextts_v*.py` 处理。
+> 若某模型依赖与其他模型冲突，再单独加 `envs/<model>`，但这属于例外，不是常态。
 
 由 `scripts/setup-envs.sh`（或 `xtask envs`）创建，`.gitignore` 排除。
 Rust 侧通过 `config` 中 `venv = "envs/vllm"` 解析解释器路径，**不假设 PATH 上有 vllm**。
@@ -247,11 +253,10 @@ config/
 ├── engines/
 │   ├── vllm.toml           # 启动命令模板、健康检查、超时、并发
 │   ├── sglang.toml
-│   ├── transformers.toml
-│   ├── indextts.toml       # 各 TTS 版本分别一份
-│   └── native.toml
-├── models/                 # 可选：按模型的覆盖配置
-│   └── tts-index-tts2.5.toml
+│   └── transformers.toml   # sidecar：含 IndexTTS 各版本适配器映射
+├── models/                 # 可选：按模型的覆盖配置（adapter、并发、显存）
+│   ├── tts-index-tts2.5.toml
+│   └── dm-laya.toml
 └── cluster.toml            # 集群拓扑：控制节点/工作节点
 ```
 
@@ -275,7 +280,7 @@ app/
 | 文件 | 基础镜像 | 内容 |
 | --- | --- | --- |
 | `Dockerfile` | `rust:1.x` 构建 → `ubuntu:22.04` 或 `nvidia/cuda:12.x-runtime` | `studio` / `studio-server` 二进制 + 配置 + sidecar 代码 + ffmpeg |
-| `Dockerfile.sidecar` | `nvidia/cuda:12.x-devel`（需编译）或 `python:3.11-slim` | vLLM / SGLang / transformers / indextts 依赖，按 build-arg 选择引擎组 |
+| `Dockerfile.sidecar` | `nvidia/cuda:12.x-devel`（需编译）或 `python:3.11-slim` | transformers + IndexTTS 依赖（sidecar），按 build-arg 选择模型组 |
 | `docker-compose.yml` | — | `studio`（8080）+ `vllm`（8000）+ `sidecar`（9000），共享 `models/` 只读卷 |
 | `docker-compose.gpu.yml` | — | 追加 `deploy.resources.reservations.devices`、`/dev/shm`、`ulimits` |
 

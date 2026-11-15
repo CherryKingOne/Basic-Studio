@@ -9,9 +9,9 @@
 | M0 | 骨架可编译 | workspace、core/config/registry/cli、FakeEngine | `cargo check` 通过；`studio doctor` 输出环境报告 |
 | M1 | vLLM 打通 | procsup + engine-vllm + 透传 API | `studio serve` 起 vLLM，`/v1/chat/completions` 流式返回 |
 | M2 | SGLang + 路由 | engine-sglang + router + failover | 同模型双引擎可切换；引擎崩溃自动转移 |
-| M3 | TTS 主线（核心） | sidecar 框架 + IndexTTS 1.5/2.0/2.5 适配 + 流式音频 | `/v1/audio/speech` 返回 PCM 流，RTF < 1 |
+| M3 | TTS 主线（核心） | sidecar 框架 + IndexTTS 1.5/2.0/2.5 适配器 + 流式音频 | `/v1/audio/speech` 返回 PCM 流，RTF < 1 |
 | M4 | 生产化 | 调度/配额/鉴权/指标/日志 | 压测下无泄漏、无僵尸进程；指标齐全 |
-| M5 | DM 与原生后端 | engine-native(candle/ort) + DM 模型接入 | Laya/Kev 进程内推理，无 Python 依赖 |
+| M5 | DM 决策模型 | DM 模型（Laya / Kev）经 vLLM 或 transformers 接入 | `/v1/decide` 返回结构化动作 |
 | M6 | 集群与生态 | gRPC 多节点、插件、Python/TS SDK、Helm | 两节点转发正常；SDK 可用 |
 
 ## M0 骨架（约 1~2 周）
@@ -44,7 +44,7 @@
 
 - sidecar 统一协议定稿：`/health`、`/infer`、`/infer/stream`（chunked PCM）。
 - `studio-media`：PCM 分块（20~40ms）、重采样、削波保护、可选 mp3/opus 编码。
-- `engine-indextts`：按 `api_version` 分派 1.0 / 1.5 / 2.0 / 2.5 adapter。
+- `engine-transformers`：sidecar 通道打通；按 `model.toml` 的 `adapter` 分派 `indextts_v1/v15/v20/v25`。
 - 流式链路：文本分句 → 增量合成 → 边合成边下发；句间不留长静音。
 - 验收：2.5 版本 100 字文本 RTF < 1；2.0 情感控制参数生效；客户端首块 < 800ms。
 
@@ -56,11 +56,11 @@
 - `studio-gpu`：显存预算、启动前准入检查、设备钉扎。
 - 验收：并发 50 路 TTS 无 OOM；指标可观测；重启引擎后指标归零且恢复。
 
-## M5 DM 与原生后端（约 3 周）
+## M5 DM 决策模型（约 2 周）
 
-- `engine-native`：`ort` / `candle` 加载 DM 模型（Laya / Kev），进程内推理。
+- DM 模型（Laya / Kev）经 vLLM 或 transformers 引擎接入，`models/DM/<name>/model.toml` 声明 `task = "decision"`。
 - 决策模型专用 API：`/v1/decide`（返回结构化动作），与聊天接口分离。
-- 验收：无 Python 环境可运行 DM 推理；P99 延迟显著低于 sidecar 路径。
+- 验收：DM 模型可被 router 正确路由到具备该 task 能力的引擎实例，`/v1/decide` 返回结构化结果。
 
 ## M6 集群与生态（约 3~4 周）
 

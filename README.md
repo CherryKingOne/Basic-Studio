@@ -19,9 +19,10 @@ Rust 编写的模型加载与推理统一控制面：用一套 Rust 进程纳管
 ## 核心思路
 
 Rust 负责注册表、调度、资源准入、路由、进程生命周期与对外 API；
-vLLM / SGLang 等 Python 引擎作为子进程运行，通过其原生 HTTP 接口通信；
-无服务端能力的引擎（Transformers、IndexTTS）由仓库自带、版本锁定的 Python sidecar 补上统一协议；
-candle / ort / llama.cpp 作为可选的原生 Rust 后端。
+推理引擎共 3 个——vLLM、SGLang（均为子进程，走原生 HTTP）、Transformers（无服务端，由仓库自带、
+版本锁定的 Python sidecar 补上统一协议）。
+
+IndexTTS（1.0/1.5/2.0/2.5）、Laya、Kev 都是**模型**，不是引擎——它们由上述 3 个引擎加载执行。
 
 ## 快速开始（规划）
 
