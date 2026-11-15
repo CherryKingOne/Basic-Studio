@@ -1,0 +1,62 @@
+[models]
+root = "models"
+auto_discover = true
+checksum_policy = "warn"
+
+[engines.vllm]
+enabled = true
+command = ["vllm", "serve"]
+args = [
+  "{model_path}",
+  "--host",
+  "{host}",
+  "--port",
+  "{port}",
+  "--gpu-memory-utilization",
+  "0.85",
+]
+health_path = "/health"
+port = 8000
+startup_timeout_s = 900
+max_instances = 1
+
+[engines.sglang]
+enabled = true
+command = ["python", "-m", "sglang.launch_server"]
+args = [
+  "--model-path",
+  "{model_path}",
+  "--host",
+  "{host}",
+  "--port",
+  "{port}",
+]
+health_path = "/health"
+port = 30000
+startup_timeout_s = 900
+max_instances = 1
+
+[engines.transformers]
+enabled = true
+command = ["python", "-m", "studio_sidecar", "serve", "transformers"]
+args = ["--model", "{model_path}", "--port", "{port}"]
+health_path = "/health"
+port = 9000
+startup_timeout_s = 900
+max_instances = 1
+
+[sidecars.entries.transformers]
+entry = "studio_sidecar.serve:transformers"
+
+[sidecars.entries.transformers.adapters]
+indextts_v10 = "studio_sidecar.adapters.indextts_v1"
+indextts_v15 = "studio_sidecar.adapters.indextts_v15"
+indextts_v20 = "studio_sidecar.adapters.indextts_v20"
+indextts_v25 = "studio_sidecar.adapters.indextts_v25"
+
+[gateway]
+listen = "0.0.0.0:8080"
+
+[scheduler]
+max_concurrency_per_model = 8
+queue_max_depth = 256

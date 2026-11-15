@@ -1,0 +1,28 @@
+[package]
+name = "studio-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Basic-Studio command line interface"
+
+[[bin]]
+name = "studio"
+path = "src/main.rs"
+
+[dependencies]
+studio-core.workspace = true
+studio-config.workspace = true
+studio-registry.workspace = true
+studio-engine.workspace = true
+studio-router.workspace = true
+engine-vllm.workspace = true
+engine-sglang.workspace = true
+engine-transformers.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "studio-registry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Model discovery and registry for Basic-Studio"
+
+[dependencies]
+studio-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

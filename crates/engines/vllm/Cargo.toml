@@ -1,0 +1,17 @@
+[package]
+name = "engine-vllm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "vLLM engine adapter for Basic-Studio"
+
+[dependencies]
+studio-core.workspace = true
+studio-config.workspace = true
+studio-engine.workspace = true
+studio-procsup.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+tracing.workspace = true

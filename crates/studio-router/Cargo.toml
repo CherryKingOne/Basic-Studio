@@ -1,0 +1,13 @@
+[package]
+name = "studio-router"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Model to engine routing for Basic-Studio"
+
+[dependencies]
+studio-core.workspace = true
+studio-registry.workspace = true
+serde.workspace = true

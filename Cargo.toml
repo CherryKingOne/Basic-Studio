@@ -1,0 +1,50 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/studio-core",
+    "crates/studio-config",
+    "crates/studio-registry",
+    "crates/studio-procsup",
+    "crates/studio-engine",
+    "crates/engines/vllm",
+    "crates/engines/sglang",
+    "crates/engines/transformers",
+    "crates/studio-router",
+    "crates/studio-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/CherryKingOne/Basic-Studio"
+rust-version = "1.75"
+
+[workspace.dependencies]
+studio-core = { path = "crates/studio-core" }
+studio-config = { path = "crates/studio-config" }
+studio-registry = { path = "crates/studio-registry" }
+studio-procsup = { path = "crates/studio-procsup" }
+studio-engine = { path = "crates/studio-engine" }
+studio-router = { path = "crates/studio-router" }
+engine-vllm = { path = "crates/engines/vllm" }
+engine-sglang = { path = "crates/engines/sglang" }
+engine-transformers = { path = "crates/engines/transformers" }
+
+anyhow = "1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "process", "time", "net", "signal", "sync"] }
+async-trait = "0.1"
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

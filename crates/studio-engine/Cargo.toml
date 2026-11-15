@@ -1,0 +1,17 @@
+[package]
+name = "studio-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Engine abstraction for Basic-Studio"
+
+[dependencies]
+studio-core.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

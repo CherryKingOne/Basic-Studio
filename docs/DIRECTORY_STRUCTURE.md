@@ -29,7 +29,7 @@ app/                                  # 仓库根 = Basic-Studio
 ├── sdk/                                # 外部客户端 SDK（薄封装）
 ├── models/                             # ── 模型仓（gitignore，见 §4）─────────────────
 ├── envs/                               # ── 引擎运行时环境（venv，gitignore，见 §5）────
-├── config/                             # 配置模板与引擎清单（见 §6）
+├── config/                             # 配置基线 default.toml（见 §6）
 ├── deploy/k8s/                         # Kubernetes（Helm chart / manifests）
 ├── scripts/                            # 运维与开发脚本
 ├── docs/                               # 设计文档（本目录）
@@ -94,6 +94,11 @@ studio-server ─┴─▶ studio-gateway ─▶ studio-scheduler ─▶ studio-
                                           studio-core ◀── 所有 crate（只被依赖）
 ```
 
+> M0 已实现：`studio-core`、`studio-config`、`studio-registry`、`studio-procsup`、`studio-engine`、
+> `engines/{vllm,sglang,transformers}`、`studio-router`、`studio-cli`。
+> 其余 crate（`studio-gpu` / `studio-media` / `studio-gateway` / `studio-grpc` / `studio-auth` /
+> `studio-obs` / `studio-plugin` / `studio-testkit`）为规划，按 M4~M6 落地。
+
 ## 2.1 推理引擎到底放在哪（重点）
 
 一个引擎由**三部分**组成，缺一不可：
@@ -102,22 +107,22 @@ studio-server ─┴─▶ studio-gateway ─▶ studio-scheduler ─▶ studio-
 | --- | --- | --- |
 | ① 适配器 | `crates/engines/<name>/` | Rust 代码：启动参数、健康检查、协议翻译、流式转发 |
 | ② 运行时 | `envs/<name>/`（venv）或 `sidecars/`（Python 包） | 引擎真正的代码与依赖（vLLM / SGLang / transformers） |
-| ③ 清单 | `config/engines/<name>.toml` | 启动命令模板、超时、并发、健康检查路径 |
+| ③ 清单 | `config/default.toml` 的 `[engines.<name>]` 段 | 启动命令模板、超时、并发、健康检查路径 |
 
 具体对应：
 
 | 引擎 | 适配器 crate | 运行时位置 | 清单文件 |
 | --- | --- | --- | --- |
-| vLLM | `crates/engines/vllm`（包 `engine-vllm`） | `envs/vllm`（pip 安装的 vllm 命令） | `config/engines/vllm.toml` |
-| SGLang | `crates/engines/sglang`（包 `engine-sglang`） | `envs/sglang`（`python -m sglang.launch_server`） | `config/engines/sglang.toml` |
-| Transformers | `crates/engines/transformers`（包 `engine-transformers`） | `sidecars/studio_sidecar/`，跑在 `envs/transformers` | `config/engines/transformers.toml` |
+| vLLM | `crates/engines/vllm`（包 `engine-vllm`） | `envs/vllm`（pip 安装的 vllm 命令） | `[engines.vllm]` |
+| SGLang | `crates/engines/sglang`（包 `engine-sglang`） | `envs/sglang`（`python -m sglang.launch_server`） | `[engines.sglang]` |
+| Transformers | `crates/engines/transformers`（包 `engine-transformers`） | `sidecars/studio_sidecar/`，跑在 `envs/transformers` | `[engines.transformers]` |
 
 > **引擎只有上面这 3 个。** IndexTTS / Laya / Kev 是**模型**，不是引擎：
 > 它们由这些引擎加载执行。IndexTTS 属于 TTS 模型族，通过 `engine-transformers` 的 sidecar 加载，
 > 具体用哪个版本适配器由 `models/tts/<model>/model.toml` 的 `adapter` 字段决定
 > （如 `adapter = "indextts_v25"` → `sidecars/studio_sidecar/adapters/indextts_v25.py`）。
 
-一句话：**Rust 里是"适配器"，`envs/` 与 `sidecars/` 里是"引擎本体"，`config/engines/` 里是"怎么启动"，`models/` 里是"跑什么模型"。**
+一句话：**Rust 里是"适配器"，`envs/` 与 `sidecars/` 里是"引擎本体"，`config/default.toml` 的 `[engines.*]` 段是"怎么启动"，`models/` 里是"跑什么模型"。**
 
 ## 3. `sidecars/`（Python 侧）
 
@@ -250,18 +255,12 @@ Rust 侧通过 `config` 中 `venv = "envs/vllm"` 解析解释器路径，**不�
 
 ```
 config/
-├── default.toml            # 基线配置（提交）
-├── engines/
-│   ├── vllm.toml           # 启动命令模板、健康检查、超时、并发
-│   ├── sglang.toml
-│   └── transformers.toml   # sidecar：含 IndexTTS 各版本适配器映射
-├── models/                 # 可选：按模型的覆盖配置（adapter、并发、显存）
-│   ├── tts-index-tts2.5.toml
-│   └── dm-laya.toml
-└── cluster.toml            # 集群拓扑：控制节点/工作节点
+└── default.toml            # ★ 唯一默认来源：模型仓、[engines.*]、sidecar、gateway、scheduler
 ```
 
-启动参数支持占位符：`{model_path}` `{port}` `{gpu_ids}` `{tensor_parallel}` `{venv}`。
+- 引擎启动参数写在 `[engines.<name>]` 段（`command` / `args` / `health_path` / `port` / `startup_timeout_s`）。
+- 覆盖方式（优先级从低到高）：`config/default.toml` → `--config local.toml`（TOML 深合并）→ 环境变量 → CLI。
+- 启动参数支持占位符：`{model_path}` `{port}` `{host}` `{venv}` `{adapter}`。
 
 ## 7. Docker 部署（根目录）、`scripts/`、`tests/`
 
@@ -288,7 +287,7 @@ app/
 多引擎共存策略（关键）：
 
 - 每个引擎一个 Compose service，独立镜像/独立 venv，**互不共享 torch 版本**。
-- `studio` 通过 `config/engines/*.toml` 中的 `base_url`（如 `http://vllm:8000`）连接各引擎。
+- `studio` 通过 `[engines.*].base_url`（如 `http://vllm:8000`）连接各引擎。
 - 容器内运行时统一用 `envs/` 挂载卷或镜像内 venv；`studio` 不假设引擎在同一容器。
 
 GPU 相关注意事项：

@@ -61,6 +61,6 @@
 
 ## 后续演进边界
 
-- 引擎集合保持 3 个。若未来确需新引擎，仍按"1 个 adapter crate + 1 个 `config/engines/<name>.toml`"接入，
+- 引擎集合保持 3 个。若未来确需新引擎，仍按"1 个 adapter crate + 1 个 `[engines.<name>]` 配置段"接入，
   但不引入进程内推理栈（方案 B 已被否决）。
 - DM（Laya / Kev）等小模型直接跑在 vLLM 或 transformers 引擎上，不为它们单开引擎。
