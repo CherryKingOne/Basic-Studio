@@ -1,0 +1,39 @@
+/target
+**/*.rs.bk
+
+# 模型权重与运行时产物（只提交清单）
+/models/**
+!/models/README.md
+!/models/registry.toml
+!/models/models.lock
+!/models/**/model.toml
+!/models/**/config.json
+!/models/**/CHECKSUMS.sha256
+
+# 各引擎独立 venv
+/envs
+/sidecars/.venv
+**/__pycache__
+*.pyc
+
+# 权重二进制（兜底）
+*.safetensors
+*.bin
+*.gguf
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# 运行期数据
+/models/.cache
+/data
+/logs
+*.wav
+*.mp3
+*.flac
+*.opus
+
+.env
+.env.*
+!.env.example
