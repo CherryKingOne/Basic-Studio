@@ -77,6 +77,8 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile gpu up 
 | Java | `sdk/java` | `cd sdk/java && mvn test` |
 | Go | `sdk/go` | `cd sdk/go && go test ./...` |
 
+各语言 SDK 的完整用法见 [sdk/README.md](sdk/README.md)；发布流程见 [docs/PUBLISHING.md](docs/PUBLISHING.md)。
+
 ## 文档
 
 - [docs/README.md](docs/README.md) — 文档索引

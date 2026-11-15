@@ -1,6 +1,6 @@
 [project]
 name = "basic-studio"
-version = "0.1.0"
+version = "0.0.1"
 description = "Official Python SDK for Basic-Studio (model loading & inference control plane)"
 readme = "README.md"
 requires-python = ">=3.9"

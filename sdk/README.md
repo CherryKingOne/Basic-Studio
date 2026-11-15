@@ -3,13 +3,17 @@
 官方客户端，覆盖 **Python / Rust / Node.js / Java / Go** 五种语言。
 所有 SDK 面向同一套网关接口，默认地址 `http://127.0.0.1:18596`。
 
-| 语言 | 目录 | 安装 | 测试 |
-| --- | --- | --- | --- |
-| Python | `sdk/python` | `pip install ./sdk/python` | `python3 -m unittest discover -s sdk/python/tests` |
-| Rust | `sdk/rust` | `cargo add studio-sdk --path sdk/rust` | `cargo test -p studio-sdk` |
-| Node.js | `sdk/nodejs` | `npm install @basic-studio/sdk`（本地 `npm install ./sdk/nodejs`） | `cd sdk/nodejs && npm test` |
-| Java | `sdk/java` | `mvn install`（Java 17+） | `mvn test` |
-| Go | `sdk/go` | `go get github.com/CherryKingOne/Basic-Studio/sdk/go` | `cd sdk/go && go test ./...` |
+当前版本：**0.0.1**（与 git tag `0.0.1` 对应）。
+
+## 安装方式（发布产物）
+
+| 语言 | 产物 | 安装命令 |
+| --- | --- | --- |
+| Python | wheel / sdist（`*.whl`、`*.tar.gz`） | `pip install basic-studio==0.0.1`，或 `pip install ./dist/python/basic_studio-0.0.1-py3-none-any.whl` |
+| Rust | crate（`*.crate`） | `cargo add studio-sdk@0.0.1`；或 `studio-sdk = { path = "sdk/rust" }` |
+| Node.js | npm tarball（`*.tgz`） | `npm install @basic-studio/sdk@0.0.1`，或 `npm install ./dist/nodejs/basic-studio-sdk-0.0.1.tgz` |
+| Java | jar | `mvn install:install-file -Dfile=dist/java/basic-studio-sdk-0.0.1.jar` |
+| Go | 源码模块（tag 即版本） | `go get github.com/CherryKingOne/Basic-Studio/sdk/go@v0.0.1` |
 
 ## 统一 API 对照
 
@@ -25,9 +29,50 @@
 | 语音合成 | `client.tts(...)` | `client.tts(req)` | `client.tts({...})` | `client.tts(req)` | `client.TTS(ctx, req)` |
 | 决策模型 | `client.decide(...)` | `client.decide(req)` | `client.decide({...})` | `client.decide(req)` | `client.Decide(ctx, req)` |
 
+## 本地构建产物
+
+```bash
+./scripts/build-sdk.sh              # 全部（缺工具链的自动跳过）
+./scripts/build-sdk.sh python       # 只构建 Python
+./scripts/build-sdk.sh python nodejs
+```
+
+产物落在 `dist/{python,nodejs,rust,java}/`（已 gitignore）。
+
+各语言单独构建：
+
+```bash
+python3 -m build sdk/python --outdir dist/python
+cd sdk/nodejs && npm pack --pack-destination ../../dist/nodejs
+cargo package -p studio-sdk --allow-dirty --no-verify
+mvn -f sdk/java/pom.xml -DskipTests package
+cd sdk/go && go vet ./... && go test ./...
+```
+
+## 发布流程
+
+```bash
+# 1) 版本号对齐（Cargo.toml / pyproject.toml / package.json / pom.xml / sdk/go/version.go）
+# 2) 构建 + 打 tag
+./scripts/build-sdk.sh
+git commit -am "release: 0.0.1"
+git tag 0.0.1
+git push origin main --tags
+```
+
+推送 tag 后 `.github/workflows/sdk-release.yml` 自动：
+构建各语言产物 → 生成 GitHub Release（含产物附件）→ 发布 PyPI / npm / crates.io / Maven Central。
+需要的 Secrets：`NPM_TOKEN`、`CARGO_REGISTRY_TOKEN`、`OSSRH_USERNAME`、`OSSRH_TOKEN`（PyPI 使用 trusted publishing）。
+
+## 版本策略
+
+- 主版本号 = 网关协议不兼容变更；次版本 = 新增接口；补丁 = 修 bug。
+- 各 SDK 与网关同版本号发布，保持 `0.0.1` 对齐。
+- Go 模块版本即 tag（`v0.0.1` 形式），`sdk/go/version.go` 里的 `Version` 常量需与 tag 同步。
+
 ## 鉴权
 
-网关配置了 `[gateway].api_keys` 后，各 SDK 传 API Key 即可：
+网关配置 `[gateway].api_keys` 后，各 SDK 传 API Key：
 
 ```python
 Client(api_key="sk-...")
@@ -48,6 +93,5 @@ basicstudio.New(url).WithAPIKey("sk-...")
 ## 一致性约定
 
 - `chat` 的 `messages` 支持字符串或消息对象；`system` 作为独立参数。
-- 流式接口只在 **内容增量** 上产出，usage 等非文本帧不透传（Responses 流式除外，它产出原始事件）。
-- 错误统一抛 `StudioError` / `StudioException` / `APIError`，含 HTTP 状态码与服务端 message。
-- 所有方法均可通过 context（Go）、取消令牌或关闭客户端释放连接。
+- 流式接口只产出内容增量；`responses_stream` 产出原始事件（含类型化事件名）。
+- 错误统一为 `StudioError` / `StudioException` / `APIError`，含 HTTP 状态码与服务端 message。

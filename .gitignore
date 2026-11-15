@@ -37,3 +37,7 @@
 .env
 .env.*
 !.env.example
+# SDK 产物
+/dist
+/sdk/**/target
+/sdk/java/target
