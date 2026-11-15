@@ -9,7 +9,9 @@ members = [
     "crates/engines/vllm",
     "crates/engines/sglang",
     "crates/engines/transformers",
+    "crates/engines/llamacpp",
     "crates/studio-router",
+    "crates/studio-device",
     "crates/studio-media",
     "crates/studio-scheduler",
     "crates/studio-auth",
@@ -32,6 +34,7 @@ studio-registry = { path = "crates/studio-registry" }
 studio-procsup = { path = "crates/studio-procsup" }
 studio-engine = { path = "crates/studio-engine" }
 studio-router = { path = "crates/studio-router" }
+studio-device = { path = "crates/studio-device" }
 studio-media = { path = "crates/studio-media" }
 studio-scheduler = { path = "crates/studio-scheduler" }
 studio-auth = { path = "crates/studio-auth" }
@@ -40,6 +43,7 @@ studio-gateway = { path = "crates/studio-gateway" }
 engine-vllm = { path = "crates/engines/vllm" }
 engine-sglang = { path = "crates/engines/sglang" }
 engine-transformers = { path = "crates/engines/transformers" }
+engine-llamacpp = { path = "crates/engines/llamacpp" }
 
 anyhow = "1"
 thiserror = "1"

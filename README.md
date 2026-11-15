@@ -1,6 +1,6 @@
 # Basic-Studio
 
-Rust 编写的模型加载与推理统一控制面：用一套 Rust 进程纳管 vLLM / SGLang / Transformers 三种推理引擎，
+Rust 编写的模型加载与推理统一控制面：用一套 Rust 进程纳管 vLLM / SGLang / Transformers（默认）/ llama.cpp 四种推理引擎，
 统一暴露 OpenAI 兼容接口，支持 LLM、TTS（IndexTTS 系列）流式推理与决策模型（DM：Laya、Kev）推理。
 
 **M0~M3 已完成**：Rust workspace 可编译，`cargo test --workspace` 57 项通过、sidecar `python -m unittest` 11 项通过，`cargo clippy` 无告警。
@@ -12,7 +12,7 @@ Rust 编写的模型加载与推理统一控制面：用一套 Rust 进程纳管
 - `studio-registry`：扫描 `models/`、解析 `model.toml`、重复 id 检测
 - `studio-procsup`：子进程监督（spawn / HTTP 与 TCP 就绪探测 / SIGTERM→SIGKILL / 日志落盘 / 端口池）
 - `studio-engine`：`Engine` trait（生命周期 + `infer` + `tts`）、实例注册表、OpenAI 协议工具（SSE 解析、用量提取）
-- `crates/engines/{vllm,sglang,transformers}`：
+- `crates/engines/{vllm,sglang,transformers,llamacpp}`：
   - vLLM：`/v1/chat/completions`、`/v1/completions`、`/v1/embeddings`、`/v1/audio/speech`
   - SGLang：OpenAI 优先，404 时回退原生 `/generate`
   - Transformers：sidecar 通道（`/infer`、`/infer/stream`，NDJSON 事件）
@@ -23,12 +23,13 @@ Rust 编写的模型加载与推理统一控制面：用一套 Rust 进程纳管
 - `studio-obs`：Prometheus 文本指标（请求数、token、TTFT、音频字节、引擎实例）
 - `studio-router`：`(模型, 任务)` → 引擎候选排序，支持按模型 id 精确匹配
 - `sidecars/`：Python sidecar（echo / transformers / IndexTTS 1.0~2.5 / DM Laya 适配器）
-- `studio-cli`：`studio serve|models ls|models inspect|models route|engines ls|doctor`
+- `studio-device`：CPU/NVIDIA/AMD/NPU/TPU 五类加速器探测与多卡分配
+- `studio-cli`：`studio serve|models ls|models inspect|models route|engines ls|devices|doctor`
 - 根目录 Docker：`Dockerfile`、`Dockerfile.sidecar`、`docker-compose.yml`、`docker-compose.gpu.yml`
 
 服务默认端口 **17283**。
 
-尚未开始：Prometheus 之外的指标后端、gRPC 多节点集群、模型下载器、SDK（M4~M6 的剩余项）。
+尚未开始：NVML 显存预算、权重下载器、Prometheus 之外的指标后端、gRPC 多节点集群、SDK（M4~M6 的剩余项）。
 
 ## 构建与运行
 
@@ -76,10 +77,10 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile gpu up 
 ## 核心思路
 
 Rust 负责注册表、调度、资源准入、路由、进程生命周期与对外 API；
-推理引擎共 3 个——vLLM、SGLang（均为子进程，走原生 HTTP）、Transformers（无服务端，由仓库自带、
-版本锁定的 Python sidecar 补上统一协议）。
+推理引擎共 4 个——vLLM、SGLang、llama.cpp（均为子进程，走原生 HTTP）、Transformers（默认，无服务端，由仓库自带、
+版本锁定的 Python sidecar 补上统一协议）。未在清单里声明引擎的模型默认走 Transformers。
 
-IndexTTS（1.0/1.5/2.0/2.5）、Laya、Kev 都是**模型**，不是引擎——它们由上述 3 个引擎加载执行。
+IndexTTS（1.0/1.5/2.0/2.5）、Laya、Kev 都是**模型**，不是引擎——它们由上述 4 个引擎加载执行。
 
 ## 快速开始
 

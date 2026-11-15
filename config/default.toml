@@ -56,9 +56,29 @@ indextts_v25 = "studio_sidecar.adapters.indextts_v25"
 
 [gateway]
 listen = "0.0.0.0:17283"
+default_engine = "transformers"
 # 非空则开启 Bearer 鉴权；留空为本地开发模式
 api_keys = []
 
 [scheduler]
 max_concurrency_per_model = 8
 queue_max_depth = 256
+[accelerators]
+enabled = true
+# 探测顺序即优先级：GPU 类优先（NVIDIA → AMD → NPU → TPU），CPU 作为最后兜底
+kinds = ["nvidia", "amd", "npu", "tpu", "cpu"]
+tensor_parallel = 1
+data_parallel = 1
+pipeline_parallel = 1
+placement = "one_per_device"
+cpu_fallback = true
+
+[engines.llamacpp]
+enabled = true
+command = ["llama-server"]
+args = ["-m", "{model_path}", "--host", "{host}", "--port", "{port}", "-c", "4096"]
+health_path = "/health"
+port = 8081
+startup_timeout_s = 300
+max_instances = 1
+

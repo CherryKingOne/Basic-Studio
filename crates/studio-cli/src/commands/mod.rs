@@ -1,3 +1,4 @@
+pub mod devices;
 pub mod doctor;
 pub mod engines;
 pub mod models;

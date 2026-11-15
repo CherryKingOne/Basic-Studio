@@ -52,7 +52,8 @@ pub fn run(command: Command) -> anyhow::Result<()> {
 
 fn load(config: Option<&Path>) -> anyhow::Result<(studio_config::Config, ModelIndex)> {
     let cfg = studio_config::load(config)?;
-    let (index, _) = studio_registry::discover(&cfg.models.root)?;
+    let (index, _) =
+        studio_registry::discover_with_default(&cfg.models.root, cfg.gateway.default_engine)?;
     Ok((cfg, index))
 }
 

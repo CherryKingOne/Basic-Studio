@@ -269,6 +269,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine-llamacpp"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "reqwest",
+ "serde_json",
+ "studio-config",
+ "studio-core",
+ "studio-engine",
+ "studio-procsup",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "engine-sglang"
 version = "0.1.0"
 dependencies = [
@@ -1202,6 +1217,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "engine-llamacpp",
  "engine-sglang",
  "engine-transformers",
  "engine-vllm",
@@ -1209,6 +1225,7 @@ dependencies = [
  "studio-auth",
  "studio-config",
  "studio-core",
+ "studio-device",
  "studio-engine",
  "studio-gateway",
  "studio-obs",
@@ -1237,6 +1254,17 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "toml",
+]
+
+[[package]]
+name = "studio-device"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "studio-core",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1296,6 +1324,7 @@ dependencies = [
  "reqwest",
  "studio-config",
  "studio-core",
+ "studio-device",
  "tempfile",
  "tokio",
  "tracing",

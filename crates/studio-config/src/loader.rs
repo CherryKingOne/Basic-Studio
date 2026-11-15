@@ -84,7 +84,7 @@ mod tests {
     fn loads_defaults() {
         let cfg = load(None).expect("default config loads");
         assert_eq!(cfg.models.root, std::path::PathBuf::from("models"));
-        assert_eq!(cfg.enabled_engines().len(), 3);
+        assert_eq!(cfg.enabled_engines().len(), 4);
         assert_eq!(cfg.gateway.listen, "0.0.0.0:17283");
     }
 

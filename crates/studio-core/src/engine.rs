@@ -12,13 +12,16 @@ pub enum EngineKind {
     Vllm,
     Sglang,
     Transformers,
+    /// llama.cpp（`llama-server`）
+    LlamaCpp,
 }
 
 impl EngineKind {
-    pub const ALL: [EngineKind; 3] = [
+    pub const ALL: [EngineKind; 4] = [
         EngineKind::Vllm,
         EngineKind::Sglang,
         EngineKind::Transformers,
+        EngineKind::LlamaCpp,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -26,6 +29,7 @@ impl EngineKind {
             EngineKind::Vllm => "vllm",
             EngineKind::Sglang => "sglang",
             EngineKind::Transformers => "transformers",
+            EngineKind::LlamaCpp => "llamacpp",
         }
     }
 }
@@ -44,6 +48,7 @@ impl FromStr for EngineKind {
             "vllm" => Ok(EngineKind::Vllm),
             "sglang" => Ok(EngineKind::Sglang),
             "transformers" => Ok(EngineKind::Transformers),
+            "llama.cpp" | "llamacpp" | "llama" => Ok(EngineKind::LlamaCpp),
             other => Err(Error::EngineKind(other.to_string())),
         }
     }

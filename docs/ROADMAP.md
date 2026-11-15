@@ -6,11 +6,11 @@
 
 | 阶段 | 目标 | 关键交付 | 验收标准 |
 | --- | --- | --- | --- |
-| M0 | 骨架可编译 | workspace、core/config/registry/procsup/engine、3 个引擎适配器、cli | 已完成：check / clippy / test 全绿，`studio doctor` 等命令可用 |
+| M0 | 骨架可编译 | workspace、core/config/registry/procsup/engine、4 个引擎适配器、cli | 已完成：check / clippy / test 全绿，`studio doctor` 等命令可用 |
 | M1 | vLLM 打通 | procsup + engine-vllm + 网关 + 流式透传 | 已完成：`/v1/chat/completions` 非流式与 SSE 流式可用 |
 | M2 | SGLang + 路由 | engine-sglang + 按模型路由 + 失败转移 | 已完成：404 回退 `/generate`；首个候选失败自动换下一个 |
 | M3 | TTS 主线（核心） | sidecar + IndexTTS 适配器 + `/v1/audio/speech` | 已完成：PCM 流可返回；真机 RTF 待 GPU 验证 |
-| M4 | 生产化 | 调度 + 鉴权 + 指标（已完成），压测与日志滚动（待做） | 部分完成：并发限制、API Key、/metrics 已可用 |
+| M4 | 生产化 | 调度 + 鉴权 + 指标 + 异构加速器（已完成），压测与日志滚动（待做） | 部分完成：并发限制、API Key、/metrics、CPU/GPU/NPU/TPU 探测均可用 |
 | M5 | DM 决策模型 | DM 模型（Laya / Kev）经 vLLM 或 transformers 接入 | 未开始：路由与 sidecar 封装已就绪，缺权重与真实适配 |
 | M6 | 集群与生态 | gRPC 多节点、插件、Python/TS SDK、Helm | 两节点转发正常；SDK 可用 |
 
@@ -22,7 +22,7 @@
 - `studio-registry`：扫描 `models/`，解析 `model.toml`，重复 id 检测。
 - `studio-procsup`：spawn / HTTP 与 TCP 就绪探测 / SIGTERM→SIGKILL / 日志落盘 / 端口池。
 - `studio-engine`：`Engine` trait + `EngineRegistry`。
-- `crates/engines/{vllm,sglang,transformers}`：三个适配器，支持外部托管（配置 `base_url` 时不拉进程）。
+- `crates/engines/{vllm,sglang,transformers,llamacpp}`：四个适配器，支持外部托管（配置 `base_url` 时不拉进程）。
 - `studio-router`：`(模型, 任务)` → 引擎候选排序。
 - `studio-cli`：`serve` / `models ls|inspect|route` / `engines ls` / `doctor`。
 

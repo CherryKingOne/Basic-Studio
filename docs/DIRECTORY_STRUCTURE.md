@@ -63,12 +63,14 @@ crates/
 ├── engines/                # ── 推理引擎适配器（每个引擎一个 crate）──────────────
 │   ├── vllm/               # 包名 engine-vllm：OpenAI HTTP 透传 + 启动参数拼装
 │   ├── sglang/             # 包名 engine-sglang：OpenAI + /generate
-│   └── transformers/       # 包名 engine-transformers：sidecar（HTTP/WS），IndexTTS 走此通道
+│   ├── transformers/       # 包名 engine-transformers：sidecar（HTTP/WS），默认引擎，IndexTTS 走此通道
+│   └── llamacpp/           # 包名 engine-llamacpp：llama-server（GGUF，CPU 友好）
 │                           # 目录名与包名不同，Cargo.toml 中显式声明 [package] name
 │
 ├── studio-router/          # (model, task) → 引擎候选 → 打分 → 重试/故障转移
 ├── studio-scheduler/       # 准入控制、优先级队列、并发上限、取消传播、背压
-├── studio-gpu/             # NVML 设备发现、显存预算、设备钉扎、nvidia-smi 兜底
+├── studio-device/          # ★ 已实现：CPU/NVIDIA/AMD/NPU/TPU 探测与多卡分配
+├── studio-gpu/             # 规划：NVML 显存预算与设备钉扎（现由 studio-device 覆盖发现部分）
 ├── studio-storage/         # 权重下载（HF/ModelScope）、分片校验、blob 缓存、清理策略
 ├── studio-media/           # 音频解码/编码/重采样、PCM 分块、ffmpeg 桥接（TTS 专用）
 ├── studio-gateway/         # axum 路由：OpenAI 兼容 + 原生 REST + SSE/WS 流式
@@ -94,7 +96,7 @@ studio-server ─┴─▶ studio-gateway ─▶ studio-scheduler ─▶ studio-
                                           studio-core ◀── 所有 crate（只被依赖）
 ```
 
-> 已实现：`studio-core`、`studio-config`、`studio-registry`、`studio-procsup`、`studio-engine`、
+> 已实现：`studio-core`、`studio-config`、`studio-registry`、`studio-procsup`、`studio-engine`、`studio-device`、
 > `engines/{vllm,sglang,transformers}`、`studio-router`、`studio-scheduler`、`studio-auth`、
 > `studio-obs`、`studio-media`、`studio-gateway`、`studio-cli`，以及 `sidecars/`。
 > 仍为规划：`studio-gpu`（NVML 显存预算）、`studio-storage`（权重下载）、`studio-grpc`（多节点）、
@@ -116,14 +118,15 @@ studio-server ─┴─▶ studio-gateway ─▶ studio-scheduler ─▶ studio-
 | --- | --- | --- | --- |
 | vLLM | `crates/engines/vllm`（包 `engine-vllm`） | `envs/vllm`（pip 安装的 vllm 命令） | `[engines.vllm]` |
 | SGLang | `crates/engines/sglang`（包 `engine-sglang`） | `envs/sglang`（`python -m sglang.launch_server`） | `[engines.sglang]` |
-| Transformers | `crates/engines/transformers`（包 `engine-transformers`） | `sidecars/studio_sidecar/`，跑在 `envs/transformers` | `[engines.transformers]` |
+| Transformers | `crates/engines/transformers`（包 `engine-transformers`） | `sidecars/studio_sidecar/`，跑在 `envs/transformers` | `[engines.transformers]`（默认） |
+| llama.cpp | `crates/engines/llamacpp`（包 `engine-llamacpp`） | `llama-server`（GGUF 权重） | `[engines.llamacpp]` |
 
-> **引擎只有上面这 3 个。** IndexTTS / Laya / Kev 是**模型**，不是引擎：
+> **引擎共 4 个（默认 Transformers）。** IndexTTS / Laya / Kev 是**模型**，不是引擎：
 > 它们由这些引擎加载执行。IndexTTS 属于 TTS 模型族，通过 `engine-transformers` 的 sidecar 加载，
 > 具体用哪个版本适配器由 `models/tts/<model>/model.toml` 的 `adapter` 字段决定
 > （如 `adapter = "indextts_v25"` → `sidecars/studio_sidecar/adapters/indextts_v25.py`）。
 
-一句话：**Rust 里是"适配器"，`envs/` 与 `sidecars/` 里是"引擎本体"，`config/default.toml` 的 `[engines.*]` 段是"怎么启动"，`models/` 里是"跑什么模型"。**
+一句话：**Rust 里是"适配器"，`envs/` 与 `sidecars/`（以及 `llama-server`）里是"引擎本体"，`config/default.toml` 的 `[engines.*]` 段是"怎么启动"，`models/` 里是"跑什么模型"。**
 
 ## 3. `sidecars/`（Python 侧）
 

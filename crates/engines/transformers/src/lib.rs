@@ -298,6 +298,7 @@ impl Engine for TransformersEngine {
 
         let mut cmd = tokio::process::Command::new(&program);
         cmd.args(&args).kill_on_drop(true);
+        studio_procsup::apply_placement(&mut cmd, &self.cfg);
         let mut child = SupervisedChild::spawn(cmd, self.label.clone(), log_path)?;
 
         match child.wait_ready_http(&self.health_url, timeout).await {

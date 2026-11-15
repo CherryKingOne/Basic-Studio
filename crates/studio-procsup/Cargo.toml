@@ -10,6 +10,7 @@ description = "Supervised subprocess management for Basic-Studio engines"
 [dependencies]
 studio-core.workspace = true
 studio-config.workspace = true
+studio-device.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
 tracing.workspace = true

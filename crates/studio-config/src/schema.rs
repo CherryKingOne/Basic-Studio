@@ -5,7 +5,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use studio_core::{EngineKind, Error};
+use studio_core::{AcceleratorKind, EngineKind, Error, Placement, PlacementStrategy};
 
 /// 配置根。所有子项都带 `#[serde(default)]`，因此缺字段时回落到默认值而非报错。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -17,6 +17,7 @@ pub struct Config {
     pub sidecars: SidecarsConfig,
     pub gateway: GatewayConfig,
     pub scheduler: SchedulerConfig,
+    pub accelerators: AcceleratorsConfig,
 }
 
 impl Default for Config {
@@ -27,6 +28,7 @@ impl Default for Config {
             sidecars: SidecarsConfig::default(),
             gateway: GatewayConfig::default(),
             scheduler: SchedulerConfig::default(),
+            accelerators: AcceleratorsConfig::default(),
         }
     }
 }
@@ -131,6 +133,11 @@ pub struct EngineConfig {
     pub port: u16,
     pub startup_timeout_s: u64,
     pub max_instances: usize,
+    /// 绑定的加速器后端；`None` 表示按 `[accelerators].kinds` 自动选择。
+    pub accelerator: Option<AcceleratorKind>,
+    /// 运行时填充：该实例的设备分配（不参与序列化）。
+    #[serde(skip)]
+    pub placement: Option<Placement>,
 }
 
 impl Default for EngineConfig {
@@ -145,6 +152,8 @@ impl Default for EngineConfig {
             port: 8000,
             startup_timeout_s: 900,
             max_instances: 1,
+            accelerator: None,
+            placement: None,
         }
     }
 }
@@ -194,6 +203,34 @@ impl EngineConfig {
                 port: 9000,
                 ..Self::default()
             },
+            EngineKind::LlamaCpp => Self {
+                command: vec!["llama-server".into()],
+                args: vec![
+                    "-m".into(),
+                    "{model_path}".into(),
+                    "--host".into(),
+                    "{host}".into(),
+                    "--port".into(),
+                    "{port}".into(),
+                    "-c".into(),
+                    "4096".into(),
+                ],
+                port: 8081,
+                ..Self::default()
+            },
+        }
+    }
+
+    /// 把设备分配渲染成占位符变量（devices / tensor_parallel / data_parallel / pipeline_parallel）。
+    pub fn placement_vars(&self) -> Vec<(&'static str, String)> {
+        match &self.placement {
+            Some(placement) => vec![
+                ("devices", placement.visible.clone()),
+                ("tensor_parallel", placement.tensor_parallel.to_string()),
+                ("data_parallel", placement.data_parallel.to_string()),
+                ("pipeline_parallel", placement.pipeline_parallel.to_string()),
+            ],
+            None => Vec::new(),
         }
     }
 
@@ -268,6 +305,8 @@ pub struct SidecarConfig {
 #[serde(default)]
 pub struct GatewayConfig {
     pub listen: String,
+    /// 清单未声明 `engines` 时使用的默认引擎（当前为 Transformers）。
+    pub default_engine: EngineKind,
     /// 非空时开启 Bearer 鉴权；为空表示本地开发模式（不鉴权）。
     pub api_keys: Vec<String>,
 }
@@ -275,7 +314,8 @@ pub struct GatewayConfig {
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
-            listen: "0.0.0.0:8080".to_string(),
+            listen: "0.0.0.0:17283".to_string(),
+            default_engine: EngineKind::Transformers,
             api_keys: Vec::new(),
         }
     }
@@ -310,7 +350,7 @@ mod tests {
             assert!(!engine.command.is_empty());
             engine.validate(kind).expect("default command is valid");
         }
-        assert_eq!(cfg.enabled_engines().len(), 3);
+        assert_eq!(cfg.enabled_engines().len(), 4);
     }
 
     #[test]
@@ -324,5 +364,42 @@ mod tests {
             ChecksumPolicy::Enforce
         );
         assert!("nope".parse::<ChecksumPolicy>().is_err());
+    }
+}
+
+/// 加速器配置：后端清单、并行度、分配策略。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AcceleratorsConfig {
+    /// 总开关；关闭后所有引擎按 CPU 处理。
+    pub enabled: bool,
+    /// 参与探测的后端，顺序即优先级。
+    pub kinds: Vec<AcceleratorKind>,
+    pub tensor_parallel: usize,
+    pub data_parallel: usize,
+    pub pipeline_parallel: usize,
+    pub placement: PlacementStrategy,
+    /// 没有匹配设备时是否回退到 CPU。
+    pub cpu_fallback: bool,
+}
+
+impl Default for AcceleratorsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            // GPU 类优先，CPU 最后兜底
+            kinds: vec![
+                AcceleratorKind::Nvidia,
+                AcceleratorKind::Amd,
+                AcceleratorKind::Npu,
+                AcceleratorKind::Tpu,
+                AcceleratorKind::Cpu,
+            ],
+            tensor_parallel: 1,
+            data_parallel: 1,
+            pipeline_parallel: 1,
+            placement: PlacementStrategy::OnePerDevice,
+            cpu_fallback: true,
+        }
     }
 }

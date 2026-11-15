@@ -13,7 +13,7 @@ pub struct DoctorArgs {
     pub config: Option<PathBuf>,
 }
 
-pub fn run(args: DoctorArgs) -> anyhow::Result<()> {
+pub async fn run(args: DoctorArgs) -> anyhow::Result<()> {
     let mut failures = 0usize;
     let mut warnings = 0usize;
 
@@ -31,6 +31,40 @@ pub fn run(args: DoctorArgs) -> anyhow::Result<()> {
             fail_exit(1);
         }
     };
+
+    output::title("加速器");
+    let devices = studio_device::detect(&cfg.accelerators.kinds).await;
+    if devices.is_empty() {
+        output::status(Status::Warn, "未检测到加速器，将使用 CPU");
+    } else {
+        output::status(
+            Status::Ok,
+            format!(
+                "{} ({} devices)",
+                crate::commands::devices::summary(&devices),
+                devices.len()
+            ),
+        );
+        for device in &devices {
+            output::kv(
+                &device.kind.to_string(),
+                format!(
+                    "#{} {} {}{}",
+                    device.index,
+                    device.name,
+                    device
+                        .memory_total_mb
+                        .map(|mb| format!("{mb}MB"))
+                        .unwrap_or_default(),
+                    device
+                        .driver_version
+                        .as_ref()
+                        .map(|v| format!(" driver={v}"))
+                        .unwrap_or_default()
+                ),
+            );
+        }
+    }
 
     output::title("模型仓");
     failures += check_models(&cfg, &mut warnings);
@@ -64,7 +98,7 @@ fn check_models(cfg: &Config, warnings: &mut usize) -> usize {
         return 1;
     }
 
-    match studio_registry::discover(&root) {
+    match studio_registry::discover_with_default(&root, cfg.gateway.default_engine) {
         Ok((index, discovery)) => {
             output::status(Status::Ok, format!("{} models", index.len()));
 

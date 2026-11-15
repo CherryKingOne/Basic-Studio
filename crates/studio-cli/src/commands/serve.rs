@@ -5,7 +5,7 @@ use std::time::Duration;
 use clap::Args;
 use studio_auth::ApiKeys;
 use studio_config::{Config, EngineConfig};
-use studio_core::{EngineKind, ModelCard};
+use studio_core::{AcceleratorKind, Device, EngineKind, ModelCard, Placement};
 use studio_engine::{Engine, EngineRegistry};
 use studio_registry::ModelIndex;
 use studio_scheduler::Scheduler;
@@ -31,7 +31,8 @@ pub struct ServeArgs {
 pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
     let cfg = studio_config::load(args.config.as_deref())?;
     let root = cfg.models.root.clone();
-    let (index, discovery) = studio_registry::discover(&root)?;
+    let (index, discovery) =
+        studio_registry::discover_with_default(&root, cfg.gateway.default_engine)?;
 
     output::title("Basic-Studio");
     output::kv("models root", root.display());
@@ -47,7 +48,10 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
         tracing::warn!(ids = ?duplicates, "duplicate model ids");
     }
 
-    let engines = build_engines(&cfg, &index, &args.host, args.log_dir.clone())?;
+    let devices = studio_device::detect(&cfg.accelerators.kinds).await;
+    report_devices(&cfg, &devices);
+
+    let engines = build_engines(&cfg, &index, &devices, &args.host, args.log_dir.clone())?;
 
     output::title("启动计划");
     let rows: Vec<Vec<String>> = engines
@@ -112,6 +116,7 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
 fn build_engines(
     cfg: &Config,
     index: &ModelIndex,
+    devices: &[Device],
     host: &str,
     log_dir: Option<PathBuf>,
 ) -> anyhow::Result<Vec<Arc<dyn Engine>>> {
@@ -126,6 +131,25 @@ fn build_engines(
                 .cloned()
                 .unwrap_or_else(|| EngineConfig::default_for(kind));
             engine_cfg.validate(kind)?;
+
+            // 选定后端并计算设备分配
+            let accelerator = engine_cfg
+                .accelerator
+                .unwrap_or_else(|| choose_accelerator(cfg, devices));
+            let placements = studio_device::plan(
+                accelerator,
+                devices,
+                cfg.accelerators.tensor_parallel,
+                cfg.accelerators.data_parallel,
+                cfg.accelerators.pipeline_parallel,
+                cfg.accelerators.placement,
+            );
+            let placement = placements
+                .into_iter()
+                .nth(spawned.saturating_sub(1))
+                .unwrap_or_else(Placement::cpu_only);
+            engine_cfg.accelerator = Some(accelerator);
+            engine_cfg.placement = Some(placement);
 
             // 本地拉起时同一引擎的多个实例不能共用端口
             if engine_cfg.base_url.is_none() && spawned > 0 {
@@ -152,6 +176,12 @@ fn build_engines(
                     host,
                     log_dir.clone(),
                 )),
+                EngineKind::LlamaCpp => Arc::new(engine_llamacpp::LlamaCppEngine::new(
+                    engine_cfg,
+                    Some(card),
+                    host,
+                    log_dir.clone(),
+                )),
             };
 
             engines.push(engine);
@@ -172,4 +202,71 @@ fn cards_for(index: &ModelIndex, kind: EngineKind) -> Vec<ModelCard> {
         .filter(|card| card.engines.contains(&kind))
         .cloned()
         .collect()
+}
+
+/// 选择后端：按 `[accelerators].kinds` 顺序挑第一个有设备的非 CPU 后端；否则 CPU。
+fn choose_accelerator(cfg: &Config, devices: &[Device]) -> AcceleratorKind {
+    if !cfg.accelerators.enabled {
+        return AcceleratorKind::Cpu;
+    }
+
+    for kind in &cfg.accelerators.kinds {
+        if *kind == AcceleratorKind::Cpu {
+            continue;
+        }
+        if devices.iter().any(|device| device.kind == *kind) {
+            return *kind;
+        }
+    }
+
+    let _ = (cfg.accelerators.cpu_fallback, devices);
+    AcceleratorKind::Cpu
+}
+
+/// 打印检测到的设备与规划结果。
+fn report_devices(cfg: &Config, devices: &[Device]) {
+    output::title("加速器");
+    if !cfg.accelerators.enabled {
+        output::kv("status", "disabled (强制 CPU)");
+        return;
+    }
+
+    if devices.is_empty() {
+        output::kv("status", "未检测到任何设备");
+        return;
+    }
+
+    let rows: Vec<Vec<String>> = devices
+        .iter()
+        .map(|device| {
+            vec![
+                device.kind.to_string(),
+                device.index.to_string(),
+                device.name.clone(),
+                device
+                    .memory_total_mb
+                    .map(|mb| format!("{mb}MB"))
+                    .unwrap_or_else(|| "-".to_string()),
+                device
+                    .memory_free_mb
+                    .map(|mb| format!("{mb}MB"))
+                    .unwrap_or_else(|| "-".to_string()),
+            ]
+        })
+        .collect();
+
+    table(&["backend", "#", "name", "total", "free"], &rows);
+    output::kv(
+        "parallel",
+        format!(
+            "tp={} dp={} pp={} strategy={}",
+            cfg.accelerators.tensor_parallel,
+            cfg.accelerators.data_parallel,
+            cfg.accelerators.pipeline_parallel,
+            match cfg.accelerators.placement {
+                studio_core::PlacementStrategy::OnePerDevice => "one_per_device",
+                studio_core::PlacementStrategy::SharedGroup => "shared_group",
+            }
+        ),
+    );
 }

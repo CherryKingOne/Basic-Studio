@@ -39,11 +39,11 @@
 - 每个引擎作为独立子进程/服务存在，Rust 通过其原生 HTTP 接口通信。
 - 无服务端的引擎（Transformers）由**仓库自带、版本锁定**的 Python sidecar 补上统一 HTTP/WS 接口。
   IndexTTS 等模型通过该 sidecar 加载，由 `model.toml` 的 `adapter` 选择版本适配器。
-- **不做**纯 Rust 推理栈：不引入 candle / ort / llama.cpp，不新增 `engine-native`。引擎固定为 3 个。
+- **不做**纯 Rust 推理栈：不引入 candle / ort，不新增 `engine-native`。引擎为 4 个（含 llama.cpp）。
 
 ## 决策
 
-采用方案 C，**引擎集合固定为 vLLM、SGLang、Transformers 三个**。理由：
+采用方案 C，**引擎集合为 vLLM、SGLang、Transformers（默认）、llama.cpp**。理由：
 
 1. 不重写轮子，第一时间拿到 vLLM/SGLang 的全部优化。
 2. 故障域隔离：单个引擎崩溃不影响控制面与其他引擎。
@@ -61,6 +61,6 @@
 
 ## 后续演进边界
 
-- 引擎集合保持 3 个。若未来确需新引擎，仍按"1 个 adapter crate + 1 个 `[engines.<name>]` 配置段"接入，
+- 引擎集合为 4 个。若未来确需新引擎，仍按"1 个 adapter crate + 1 个 `[engines.<name>]` 配置段"接入，
   但不引入进程内推理栈（方案 B 已被否决）。
 - DM（Laya / Kev）等小模型直接跑在 vLLM 或 transformers 引擎上，不为它们单开引擎。

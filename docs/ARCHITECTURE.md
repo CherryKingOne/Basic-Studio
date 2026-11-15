@@ -11,7 +11,7 @@
 | 引擎集成方式 | **进程编排（Supervised Subprocess）+ 协议客户端** | vLLM/SGLang/TensorRT-LLM 原生就是 Python 服务，且各有独立 CUDA/PyTorch 依赖，内嵌不可行 |
 | 少数无服务端能力 | **Python sidecar**（仓库自带、版本锁定、HTTP/WS 暴露） | Transformers 及其上的模型（IndexTTS 等）只能走 Python；sidecar 是二等公民但协议统一 |
 | 是否内嵌 CPython (pyo3) | **否** | CUDA 上下文、multiprocessing、信号处理与 Rust 运行时冲突，故障域不清 |
-| 引擎数量 | **仅 3 个：vLLM、SGLang、Transformers** | 不做纯 Rust 推理栈（candle/ort），不引入 llama.cpp；避免多套栈重复建设 |
+| 引擎数量 | **4 个：vLLM、SGLang、Transformers（默认）、llama.cpp** | 不做纯 Rust 推理栈（candle/ort）；llama.cpp 只作为 GGUF/CPU 场景的后端 |
 | 新增引擎 | 新增 1 个 crate + 1 个 `engine-<name>.toml` 清单，不改动其他层 | 开闭原则，为后续引擎预留 |
 | 控制面/数据面 | 分离：控制面管模型与进程，数据面只转发请求 | 引擎故障不影响注册表与调度决策 |
 
@@ -76,11 +76,12 @@ pub trait Engine: Send + Sync + 'static {
 | --- | --- | --- | --- | --- | --- | --- |
 | vLLM | 子进程 | HTTP（OpenAI 全兼容） | ✅ | ⚠️ `/v1/audio/speech`（部分模型） | ✅ | 主力 LLM 引擎，支持 TP/PP |
 | SGLang | 子进程 | HTTP（OpenAI + `/generate`） | ✅ | ⚠️ 需 sidecar | ✅ | RadixAttention 前缀缓存强 |
-| Transformers | sidecar | HTTP/WS | ✅ | ✅ | ✅ | 无原生服务端，sidecar 托管；IndexTTS 走这条通道 |
+| Transformers | sidecar | HTTP/WS | ✅ | ✅ | ✅ | 默认引擎；无原生服务端，sidecar 托管，IndexTTS 走此通道 |
+| llama.cpp | 子进程 | HTTP（OpenAI） | ✅ | ❌ | ✅ | GGUF 模型，CPU/混合推理；由 `llama-server` 提供服务 |
 
-> **引擎只有 3 个：vLLM、SGLang、Transformers。**
-> 不做纯 Rust 推理栈（candle/ort），不引入 llama.cpp。
-> 引擎 ≠ 模型族：IndexTTS、Laya、Kev 是**模型**，由上述 3 个引擎加载执行。
+> **引擎共 4 个：vLLM、SGLang、Transformers（默认）、llama.cpp。**
+> 不做纯 Rust 推理栈（candle/ort）；llama.cpp 通过 `llama-server` 子进程接入。
+> 引擎 ≠ 模型族：IndexTTS、Laya、Kev 是**模型**，由上述 4 个引擎加载执行。
 > IndexTTS 属于 TTS 模型族，通过 Transformers 引擎（sidecar）加载，
 > 由 `model.toml` 的 `adapter` 字段选择对应版本的适配器（`indextts_v10/v15/v20/v25`）。
 
@@ -175,6 +176,53 @@ default_engine_policy = "prefer_local"
 [scheduler]
 max_concurrency_per_model = 8
 queue_max_depth = 256
+```
+
+## 10.1 异构加速器（CPU / NVIDIA / AMD / NPU / TPU）
+
+`studio-device` 负责设备发现与多卡分配，`studio-procsup` 在拉起引擎子进程时把分配结果
+翻译成环境变量与并行参数。
+
+| 后端 | 探测方式 | visible 环境变量 | 说明 |
+| --- | --- | --- | --- |
+| NVIDIA | `nvidia-smi --query-gpu` | `CUDA_VISIBLE_DEVICES` | 支持 TP/PP/DP |
+| AMD | `rocm-smi --csv` | `ROCR_VISIBLE_DEVICES` | 走 ROCm，兼容 CUDA 接口 |
+| NPU | `npu-smi info`，回退 `/dev/davinci*` | `ASCEND_RT_VISIBLE_DEVICES` + `ASCEND_DEVICE_ID` | 昇腾 910B/910B4 等 |
+| TPU | `/dev/accel*`，回退 `tpu-info` | `TPU_VISIBLE_CHIPS` | v5e 等多芯片按 chip 计数 |
+| CPU | `/proc/cpuinfo` + `available_parallelism` | 无 | 兜底，`--device cpu` |
+
+探测顺序默认 `nvidia → amd → npu → tpu → cpu`：**GPU 类优先，CPU 最后兜底**；
+`[accelerators].kinds` 可自定义顺序，`[engines.<name>].accelerator` 可把某个引擎钉在指定后端。
+
+多卡分配：
+
+- `tensor_parallel` / `pipeline_parallel` 决定单个实例占用几张卡；
+- `placement = "one_per_device"`：按组切分，N 张卡跑 N/tp 个实例（数据并行）；
+- `placement = "shared_group"`：所有卡给一个实例（纯模型并行）；
+- 分配结果同时下发 `CUDA_VISIBLE_DEVICES` 等环境变量与 `--tensor-parallel-size` 参数，
+  引擎不需要感知异构差异。
+
+配置示例：
+
+```toml
+[accelerators]
+enabled = true
+kinds = ["nvidia", "amd", "npu", "tpu", "cpu"]
+tensor_parallel = 2
+data_parallel = 2
+pipeline_parallel = 1
+placement = "one_per_device"
+cpu_fallback = true
+
+[engines.vllm]
+accelerator = "nvidia"     # 可选：钉死后端
+```
+
+查看设备：
+
+```bash
+studio devices
+studio doctor     # 含加速器摘要与逐设备信息
 ```
 
 ## 11. 关键风险

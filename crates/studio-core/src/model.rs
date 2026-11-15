@@ -112,18 +112,21 @@ impl ModelCard {
                 reason: "field `id` is required".to_string(),
             });
         }
-        if card.engines.is_empty() {
-            return Err(Error::Manifest {
-                path: origin.to_path_buf(),
-                reason: "field `engines` must list at least one engine".to_string(),
-            });
-        }
+        // `engines` 允许为空：由注册表按 `[gateway].default_engine` 填充。
         Ok(card)
     }
 
     /// 首选引擎：优先取显式 `engine`，否则取 `engines` 首项。
     pub fn preferred_engine(&self) -> Option<EngineKind> {
         self.engine.or_else(|| self.engines.first().copied())
+    }
+
+    /// 未在清单里声明引擎时，使用默认引擎。
+    pub fn apply_default_engine(&mut self, default: EngineKind) {
+        if self.engines.is_empty() {
+            self.engine = Some(default);
+            self.engines = vec![default];
+        }
     }
 
     pub fn supports(&self, task: TaskKind) -> bool {
@@ -158,11 +161,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_card_without_engines() {
-        let err = ModelCard::parse("id = \"dm/laya\"\nfamily = \"laya\"\ntask = \"decision\"")
-            .expect_err("engines is required");
-        assert!(matches!(err, Error::Manifest { .. }));
-        assert!(err.to_string().contains("engines"));
+    fn missing_engines_is_filled_by_default() {
+        let mut card = ModelCard::parse("id = \"dm/laya\"\nfamily = \"laya\"\ntask = \"decision\"")
+            .expect("engines are optional");
+        assert!(card.engines.is_empty());
+
+        card.apply_default_engine(EngineKind::Transformers);
+        assert_eq!(card.engines, vec![EngineKind::Transformers]);
+        assert_eq!(card.preferred_engine(), Some(EngineKind::Transformers));
     }
 
     #[test]

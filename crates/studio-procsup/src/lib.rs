@@ -10,3 +10,5 @@ mod signal;
 pub use child::{probe_http, SupervisedChild};
 pub use log::open_log;
 pub use port::PortPool;
+pub mod placement;
+pub use placement::apply as apply_placement;

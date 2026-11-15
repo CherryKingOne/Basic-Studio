@@ -19,6 +19,9 @@ pub enum Error {
     #[error("invalid task kind: {0}")]
     TaskKind(String),
 
+    #[error("invalid accelerator: {0}")]
+    Accelerator(String),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 

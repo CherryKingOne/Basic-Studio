@@ -24,6 +24,8 @@ enum Command {
         #[command(subcommand)]
         command: commands::engines::Command,
     },
+    /// 加速器列表
+    Devices(commands::devices::DevicesArgs),
     /// 环境自检
     Doctor(commands::doctor::DoctorArgs),
 }
@@ -44,6 +46,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Serve(args) => commands::serve::run(args).await,
         Command::Models { command } => commands::models::run(command),
         Command::Engines { command } => commands::engines::run(command),
-        Command::Doctor(args) => commands::doctor::run(args),
+        Command::Devices(args) => commands::devices::run(args).await,
+        Command::Doctor(args) => commands::doctor::run(args).await,
     }
 }

@@ -1,0 +1,19 @@
+[package]
+name = "engine-llamacpp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "llama.cpp (llama-server) engine adapter for Basic-Studio"
+
+[dependencies]
+studio-core.workspace = true
+studio-config.workspace = true
+studio-engine.workspace = true
+studio-procsup.workspace = true
+async-trait.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
