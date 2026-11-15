@@ -25,7 +25,7 @@ class BasicStudioClientTest {
 
     @BeforeEach
     void startServer() throws IOException {
-        server = HttpServer.newHttpServer(new InetSocketAddress("127.0.0.1", 0), 0);
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", this::handle);
         server.start();
         baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
@@ -148,7 +148,7 @@ class BasicStudioClientTest {
                     StudioException.class,
                     () -> client.embeddings("chat/mock", "hi"));
             assertEquals(404, exception.status());
-            assertTrue(exception.message().contains("not_found"));
+            assertTrue(exception.getMessage().contains("unknown path"));
         }
     }
 

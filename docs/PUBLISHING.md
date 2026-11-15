@@ -1,16 +1,30 @@
 # 发布流程（SDK 与网关）
 
-版本：**0.0.1**（第一个正式 tag）。
+版本：**0.0.1**（tag `0.0.1` 已发布，产物已挂载到 Release）。
+
+## 0. 直接下载（已发布）
+
+GitHub Release: https://github.com/CherryKingOne/Basic-Studio/releases/tag/0.0.1
+
+| 产物 | 说明 |
+| --- | --- |
+| `basic_studio-0.0.1-py3-none-any.whl` | Python wheel（`pip install <url>`） |
+| `basic_studio-0.0.1.tar.gz` | Python sdist（`pip install <url>`） |
+| `studio-sdk-0.0.1.crate` | Rust crate（`cargo install`/`cargo add` 或本地解包） |
+| `basic-studio-sdk-0.0.1.tgz` | npm tarball（`npm install <url>`） |
+| `basic-studio-sdk-0.0.1.jar` | Java 17 jar（`mvn install:install-file`） |
+| `basic-studio-sdk-0.0.1-sources.jar` | Java 源码包 |
+| `sdk-go-0.0.1-src.zip` | Go 源码包（`go get .../sdk/go@v0.0.1` 亦可） |
 
 ## 1. 产物与安装
 
 | 语言 | 产物 | 发布目标 | 安装 |
 | --- | --- | --- | --- |
-| Python | wheel + sdist | PyPI (`basic-studio`) | `pip install basic-studio==0.0.1` |
-| Rust | `.crate` | crates.io (`studio-sdk`) | `cargo add studio-sdk@0.0.1` |
-| Node.js | `.tgz` | npm (`@basic-studio/sdk`) | `npm install @basic-studio/sdk@0.0.1` |
-| Java | `.jar` | Maven Central (`ai.basicstudio:basic-studio-sdk`) | `mvn` 依赖 |
-| Go | 源码模块 | GitHub tag（无独立仓库） | `go get .../sdk/go@v0.0.1` |
+| Python | wheel + sdist | GitHub Release（PyPI 待接入） | `pip install <release-url>` |
+| Rust | `.crate` | GitHub Release（crates.io 待接入） | `cargo add studio-sdk@0.0.1` |
+| Node.js | `.tgz` | GitHub Release（npm 待接入） | `npm install <release-url>` |
+| Java | `.jar` + `-sources.jar` | GitHub Release（Maven Central 待接入） | `mvn install:install-file` |
+| Go | 源码模块 + `sdk-go-0.0.1-src.zip` | GitHub tag | `go get .../sdk/go@v0.0.1` |
 
 ## 2. 发布步骤
 
@@ -53,6 +67,7 @@ mvn -f sdk/java/pom.xml -DskipTests deploy
 1. 构建 5 种语言产物并上传 workflow artifact；
 2. 创建 GitHub Release 并附加产物；
 3. 分别发布 PyPI（trusted publishing）、npm（`NPM_TOKEN`）、crates.io（`CARGO_REGISTRY_TOKEN`）、Maven Central（`OSSRH_*`）。
+   产物同时挂载到 GitHub Release（`softprops/action-gh-release`），无需额外 token 即可下载。
 
 需要在仓库设置 Secrets：
 
@@ -72,11 +87,12 @@ PyPI 使用 Trusted Publishing，无需长期 token（在 PyPI 侧配置 publish
 - 网关与各语言 SDK 共用同一版本号，便于追踪兼容关系。
 - Go 的 `sdk/go/version.go::Version` 常量必须与 tag 一致。
 
-## 4.1 本次发布检查表
+## 4.1 发布检查表
 
 - [x] 版本号统一为 0.0.1
 - [x] 产物构建脚本 `scripts/build-sdk.sh`
 - [x] 发布流水线 `.github/workflows/sdk-release.yml`
 - [x] 安装文档 `sdk/README.md`、各语言 `sdk/*/README.md`
-- [ ] 本地执行 `./scripts/build-sdk.sh`（需 python build / npm / cargo / mvn）
-- [ ] 执行 `git tag 0.0.1` 并推送 tag
+- [x] 本地执行 `./scripts/build-sdk.sh`（Python 用 `scripts/build-python-dist.py` 兜底，无需 pip）
+- [x] 执行 `git tag 0.0.1` 并推送 tag
+- [x] 7 个产物上传到 GitHub Release

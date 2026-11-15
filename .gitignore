@@ -40,4 +40,6 @@
 # SDK 产物
 /dist
 /sdk/**/target
-/sdk/java/target
+# Java 构建依赖（脚本按需下载）
+/sdk/java/deps
+
