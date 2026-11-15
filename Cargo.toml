@@ -18,6 +18,7 @@ members = [
     "crates/studio-obs",
     "crates/studio-gateway",
     "crates/studio-cli",
+    "sdk/rust",
 ]
 
 [workspace.package]
@@ -40,6 +41,7 @@ studio-scheduler = { path = "crates/studio-scheduler" }
 studio-auth = { path = "crates/studio-auth" }
 studio-obs = { path = "crates/studio-obs" }
 studio-gateway = { path = "crates/studio-gateway" }
+studio-sdk = { path = "sdk/rust" }
 engine-vllm = { path = "crates/engines/vllm" }
 engine-sglang = { path = "crates/engines/sglang" }
 engine-transformers = { path = "crates/engines/transformers" }

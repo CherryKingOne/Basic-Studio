@@ -1,0 +1,19 @@
+[project]
+name = "basic-studio"
+version = "0.1.0"
+description = "Official Python SDK for Basic-Studio (model loading & inference control plane)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Basic-Studio" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["basic_studio*"]

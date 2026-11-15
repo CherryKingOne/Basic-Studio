@@ -26,6 +26,7 @@ Rust 编写的模型加载与推理统一控制面：用一套 Rust 进程纳管
 - `studio-device`：CPU/NVIDIA/AMD/NPU/TPU 五类加速器探测与多卡分配
 - `studio-cli`：`studio serve|models ls|models inspect|models route|engines ls|devices|doctor`
 - 根目录 Docker：`Dockerfile`、`Dockerfile.sidecar`、`docker-compose.yml`、`docker-compose.gpu.yml`
+- SDK：Python / Rust / Node.js / Java / Go（`sdk/`，见 [sdk/README.md](sdk/README.md)）
 
 服务默认端口 **18596**（网关、sidecar、各引擎容器统一使用该端口；同机多实例时自动递增）。
 网关基于 **Salvo** 框架（见 `.claude/skills/salvo/SKILL.md`）。
@@ -65,6 +66,16 @@ docker compose up -d studio              # 仅控制面
 docker compose --profile vllm up -d      # 额外拉起 vLLM
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile gpu up -d
 ```
+
+## SDK
+
+| 语言 | 目录 | 测试命令 |
+| --- | --- | --- |
+| Python | `sdk/python` | `python3 -m unittest discover -s sdk/python/tests` |
+| Rust | `sdk/rust` | `cargo test -p studio-sdk` |
+| Node.js | `sdk/nodejs` | `cd sdk/nodejs && npm test` |
+| Java | `sdk/java` | `cd sdk/java && mvn test` |
+| Go | `sdk/go` | `cd sdk/go && go test ./...` |
 
 ## 文档
 

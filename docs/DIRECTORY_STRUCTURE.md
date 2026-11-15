@@ -26,7 +26,7 @@ app/                                  # 仓库根 = Basic-Studio
 ├── crates/                             # ── Rust 主体（workspace members；引擎在 crates/engines/）
 ├── protos/                             # gRPC 定义（集群内部通信）
 ├── sidecars/                           # ── Python sidecar（有服务端能力缺口的引擎）────
-├── sdk/                                # 外部客户端 SDK（薄封装）
+├── sdk/                                # ★ 官方 SDK：python / rust / nodejs / java / go（见 sdk/README.md）
 ├── models/                             # ── 模型仓（gitignore，见 §4）─────────────────
 ├── envs/                               # ── 引擎运行时环境（venv，gitignore，见 §5）────
 ├── config/                             # 配置基线 default.toml（见 §6）
@@ -97,6 +97,7 @@ studio-server ─┴─▶ studio-gateway ─▶ studio-scheduler ─▶ studio-
 ```
 
 > 已实现：`studio-core`、`studio-config`、`studio-registry`、`studio-procsup`、`studio-engine`、`studio-device`、
+> 以及 `sdk/rust`（workspace 成员）与 `sdk/{python,nodejs,java,go}`、
 > `engines/{vllm,sglang,transformers}`、`studio-router`、`studio-scheduler`、`studio-auth`、
 > `studio-obs`、`studio-media`、`studio-gateway`、`studio-cli`，以及 `sidecars/`。
 > 仍为规划：`studio-gpu`（NVML 显存预算）、`studio-storage`（权重下载）、`studio-grpc`（多节点）、

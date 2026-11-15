@@ -1,0 +1,25 @@
+{
+  "name": "@basic-studio/sdk",
+  "version": "0.1.0",
+  "description": "Official Node.js SDK for Basic-Studio (model loading & inference control plane)",
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "license": "MIT"
+}
