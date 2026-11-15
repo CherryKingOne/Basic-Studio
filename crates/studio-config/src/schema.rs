@@ -149,7 +149,7 @@ impl Default for EngineConfig {
             args: Vec::new(),
             health_path: "/health".to_string(),
             base_url: None,
-            port: 8000,
+            port: 18596,
             startup_timeout_s: 900,
             max_instances: 1,
             accelerator: None,
@@ -170,7 +170,7 @@ impl EngineConfig {
                     "--port".into(),
                     "{port}".into(),
                 ],
-                port: 8000,
+                port: 18596,
                 ..Self::default()
             },
             EngineKind::Sglang => Self {
@@ -183,7 +183,7 @@ impl EngineConfig {
                     "--port".into(),
                     "{port}".into(),
                 ],
-                port: 30000,
+                port: 18596,
                 ..Self::default()
             },
             EngineKind::Transformers => Self {
@@ -200,7 +200,7 @@ impl EngineConfig {
                     "--port".into(),
                     "{port}".into(),
                 ],
-                port: 9000,
+                port: 18596,
                 ..Self::default()
             },
             EngineKind::LlamaCpp => Self {
@@ -215,7 +215,7 @@ impl EngineConfig {
                     "-c".into(),
                     "4096".into(),
                 ],
-                port: 8081,
+                port: 18596,
                 ..Self::default()
             },
         }
@@ -314,7 +314,7 @@ pub struct GatewayConfig {
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
-            listen: "0.0.0.0:17283".to_string(),
+            listen: "0.0.0.0:18596".to_string(),
             default_engine: EngineKind::Transformers,
             api_keys: Vec::new(),
         }

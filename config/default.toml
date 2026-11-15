@@ -16,7 +16,7 @@ args = [
   "0.85",
 ]
 health_path = "/health"
-port = 8000
+port = 18596
 startup_timeout_s = 900
 max_instances = 1
 
@@ -32,7 +32,7 @@ args = [
   "{port}",
 ]
 health_path = "/health"
-port = 30000
+port = 18596
 startup_timeout_s = 900
 max_instances = 1
 
@@ -41,7 +41,7 @@ enabled = true
 command = ["python", "-m", "studio_sidecar", "serve", "transformers"]
 args = ["--model", "{model_path}", "--port", "{port}"]
 health_path = "/health"
-port = 9000
+port = 18596
 startup_timeout_s = 900
 max_instances = 1
 
@@ -55,7 +55,7 @@ indextts_v20 = "studio_sidecar.adapters.indextts_v20"
 indextts_v25 = "studio_sidecar.adapters.indextts_v25"
 
 [gateway]
-listen = "0.0.0.0:17283"
+listen = "0.0.0.0:18596"
 default_engine = "transformers"
 # 非空则开启 Bearer 鉴权；留空为本地开发模式
 api_keys = []
@@ -78,7 +78,7 @@ enabled = true
 command = ["llama-server"]
 args = ["-m", "{model_path}", "--host", "{host}", "--port", "{port}", "-c", "4096"]
 health_path = "/health"
-port = 8081
+port = 18596
 startup_timeout_s = 300
 max_instances = 1
 

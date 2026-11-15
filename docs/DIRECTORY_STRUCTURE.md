@@ -285,13 +285,13 @@ app/
 | --- | --- | --- |
 | `Dockerfile` | `rust:1.x` 构建 → `ubuntu:22.04` 或 `nvidia/cuda:12.x-runtime` | `studio` / `studio-server` 二进制 + 配置 + sidecar 代码 + ffmpeg |
 | `Dockerfile.sidecar` | `nvidia/cuda:12.x-devel`（需编译）或 `python:3.11-slim` | transformers + IndexTTS 依赖（sidecar），按 build-arg 选择模型组 |
-| `docker-compose.yml` | — | `studio`（17283）+ `vllm`（8000）+ `sidecar`（9000），共享 `models/` 只读卷 |
+| `docker-compose.yml` | — | `studio` + `vllm` + `sglang` + `sidecar`，全部内部端口 18596，共享 `models/` 只读卷 |
 | `docker-compose.gpu.yml` | — | 追加 `deploy.resources.reservations.devices`、`/dev/shm`、`ulimits` |
 
 多引擎共存策略（关键）：
 
 - 每个引擎一个 Compose service，独立镜像/独立 venv，**互不共享 torch 版本**。
-- `studio` 通过 `[engines.*].base_url`（如 `http://vllm:8000`）连接各引擎。
+- `studio` 通过 `[engines.*].base_url`（如 `http://vllm:18596`）连接各引擎。
 - 容器内运行时统一用 `envs/` 挂载卷或镜像内 venv；`studio` 不假设引擎在同一容器。
 
 GPU 相关注意事项：

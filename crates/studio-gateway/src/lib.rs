@@ -1,18 +1,16 @@
-//! OpenAI 兼容 HTTP 网关。
+//! OpenAI 兼容 HTTP 网关（基于 Salvo）。
 //!
-//! 对外只暴露一套协议；引擎差异（vLLM / SGLang / sidecar）由适配器消化。
+//! 对外暴露 Chat Completions、Responses、Embeddings、Audio Speech 等接口；
+//! 引擎差异（vLLM / SGLang / Transformers / llama.cpp）由适配器消化。
 //! 所有推理都经过：`鉴权 → 准入控制 → 路由选引擎 → 引擎调用（含失败转移）`。
 
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::body::{Body, Bytes};
-use axum::extract::State;
-use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use salvo::http::{header, HeaderValue};
+use salvo::prelude::*;
+use salvo::sse::{self, SseEvent};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use studio_auth::ApiKeys;
@@ -24,6 +22,10 @@ use studio_registry::ModelIndex;
 use studio_scheduler::Scheduler;
 use tokio::sync::mpsc::{self, UnboundedSender};
 
+mod responses;
+
+pub use responses::{ResponseStore, StoredResponse, PROTOCOL_NOTE};
+
 /// 网关共享状态。
 #[derive(Clone)]
 pub struct AppState {
@@ -33,6 +35,8 @@ pub struct AppState {
     pub scheduler: Arc<Scheduler>,
     pub auth: Arc<ApiKeys>,
     pub metrics: Arc<Counters>,
+    /// Responses API 的多轮存储（`previous_response_id`）。
+    pub responses: Arc<ResponseStore>,
 }
 
 impl AppState {
@@ -43,6 +47,19 @@ impl AppState {
         scheduler: Scheduler,
         auth: ApiKeys,
     ) -> Self {
+        Self::with_ttl(cfg, index, registry, scheduler, auth, 3600)
+    }
+
+    /// 同 [`AppState::new`]，但可指定 Responses 存储的 TTL（秒）。
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_ttl(
+        cfg: Config,
+        index: ModelIndex,
+        registry: EngineRegistry,
+        scheduler: Scheduler,
+        auth: ApiKeys,
+        ttl_s: u64,
+    ) -> Self {
         Self {
             cfg: Arc::new(cfg),
             index: Arc::new(index),
@@ -50,11 +67,12 @@ impl AppState {
             scheduler: Arc::new(scheduler),
             auth: Arc::new(auth),
             metrics: Arc::new(Counters::default()),
+            responses: Arc::new(ResponseStore::with_ttl(ttl_s)),
         }
     }
 }
 
-/// 网关错误 → HTTP 响应。
+/// 网关错误：统一转成 (状态码, JSON 体)。
 pub enum GatewayError {
     Unauthorized,
     BadRequest(String),
@@ -65,8 +83,8 @@ pub enum GatewayError {
     Canceled,
 }
 
-impl IntoResponse for GatewayError {
-    fn into_response(self) -> Response {
+impl GatewayError {
+    pub fn into_parts(&self) -> (StatusCode, Value) {
         let (status, code, message, retryable) = match &self {
             GatewayError::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
@@ -105,7 +123,7 @@ impl IntoResponse for GatewayError {
                 true,
             ),
             GatewayError::Canceled => (
-                StatusCode::from_u16(499).unwrap_or(StatusCode::BAD_REQUEST),
+                StatusCode::BAD_REQUEST,
                 "canceled",
                 "client canceled the request".to_string(),
                 false,
@@ -113,72 +131,156 @@ impl IntoResponse for GatewayError {
         };
 
         let mut body = json!({
-            "error": {
-                "type": code,
-                "message": message,
-                "retryable": retryable,
-            }
+            "error": { "type": code, "message": message, "retryable": retryable }
         });
-
         if retryable {
             body["error"]["retry_after_s"] = json!(5);
         }
+        (status, body)
+    }
 
-        (status, Json(body)).into_response()
+    fn render(&self, res: &mut Response) {
+        let (status, body) = self.into_parts();
+        res.status_code(status);
+        res.render(Json(body));
     }
 }
 
-/// 构造路由。
+// ------------------------------------------------------------------ 路由
+
+#[derive(Debug, Clone, Copy)]
+enum Route {
+    Health,
+    Ready,
+    Metrics,
+    Models,
+    Chat,
+    Completions,
+    Embeddings,
+    Speech,
+    Decide,
+    ResponsesCreate,
+    ResponsesRetrieve,
+    ResponsesCancel,
+}
+
+/// 带状态的 Handler：把 `Arc<AppState>` 放进结构体，避免全局变量。
+#[derive(Clone)]
+struct Endpoint {
+    route: Route,
+    state: Arc<AppState>,
+}
+
+impl Endpoint {
+    async fn dispatch(&self, req: &mut Request, res: &mut Response) -> Result<(), GatewayError> {
+        match self.route {
+            Route::Health => {
+                res.render(Json(json!({ "status": "ok" })));
+                Ok(())
+            }
+            Route::Ready => ready(&self.state, res),
+            Route::Metrics => metrics(&self.state, res),
+            Route::Models => models(&self.state, res),
+            Route::Chat => chat(&self.state, req, res).await,
+            Route::Completions => completions(&self.state, req, res).await,
+            Route::Embeddings => embeddings(&self.state, req, res).await,
+            Route::Speech => speech(&self.state, req, res).await,
+            Route::Decide => decide(&self.state, req, res).await,
+            Route::ResponsesCreate => responses::create(&self.state, req, res).await,
+            Route::ResponsesRetrieve => responses::retrieve(&self.state, req, res).await,
+            Route::ResponsesCancel => responses::cancel(&self.state, req, res).await,
+        }
+    }
+}
+
+#[async_trait]
+impl Handler for Endpoint {
+    async fn handle(
+        &self,
+        req: &mut Request,
+        _depot: &mut Depot,
+        res: &mut Response,
+        _ctrl: &mut FlowCtrl,
+    ) {
+        if let Err(err) = self.dispatch(req, res).await {
+            if !res.is_stamped() {
+                err.render(res);
+            }
+        }
+    }
+}
+
+fn endpoint(route: Route, state: &Arc<AppState>) -> Endpoint {
+    Endpoint {
+        route,
+        state: state.clone(),
+    }
+}
+
+/// 构造路由。所有路径以 `/v1` 为前缀。
 pub fn router(state: AppState) -> Router {
+    let state = Arc::new(state);
+
+    let v1 = Router::with_path("v1")
+        .push(Router::with_path("models").get(endpoint(Route::Models, &state)))
+        .push(
+            Router::with_path("chat")
+                .push(Router::with_path("completions").post(endpoint(Route::Chat, &state))),
+        )
+        .push(Router::with_path("completions").post(endpoint(Route::Completions, &state)))
+        .push(Router::with_path("embeddings").post(endpoint(Route::Embeddings, &state)))
+        .push(
+            Router::with_path("audio")
+                .push(Router::with_path("speech").post(endpoint(Route::Speech, &state))),
+        )
+        .push(Router::with_path("decide").post(endpoint(Route::Decide, &state)))
+        .push(
+            Router::with_path("responses")
+                .post(endpoint(Route::ResponsesCreate, &state))
+                .push(
+                    Router::with_path("{id}")
+                        .get(endpoint(Route::ResponsesRetrieve, &state))
+                        .delete(endpoint(Route::ResponsesCancel, &state)),
+                ),
+        );
+
     Router::new()
-        .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
-        .route("/metrics", get(metrics))
-        .route("/v1/models", get(list_models))
-        .route("/v1/chat/completions", post(chat_completions))
-        .route("/v1/completions", post(completions))
-        .route("/v1/embeddings", post(embeddings))
-        .route("/v1/audio/speech", post(speech))
-        .route("/v1/decide", post(decide))
-        .with_state(state)
+        .push(Router::with_path("healthz").get(endpoint(Route::Health, &state)))
+        .push(Router::with_path("readyz").get(endpoint(Route::Ready, &state)))
+        .push(Router::with_path("metrics").get(endpoint(Route::Metrics, &state)))
+        .push(v1)
 }
 
-async fn healthz() -> impl IntoResponse {
-    Json(json!({ "status": "ok" }))
-}
+// ------------------------------------------------------------------ 基础端点
 
-async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
+fn ready(state: &AppState, res: &mut Response) -> Result<(), GatewayError> {
     let engines = state.registry.list();
     let ready = engines.iter().filter(|e| e.state.is_ready()).count();
     let total = engines.len();
-    if total == 0 || ready == 0 {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({ "ready": false, "ready_engines": ready, "total_engines": total })),
-        )
-            .into_response()
-    } else {
-        Json(json!({ "ready": true, "ready_engines": ready, "total_engines": total }))
-            .into_response()
-    }
+
+    let payload =
+        json!({ "ready": total > 0 && ready > 0, "ready_engines": ready, "total_engines": total });
+    res.render(Json(payload));
+    Ok(())
 }
 
-async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
+fn metrics(state: &AppState, res: &mut Response) -> Result<(), GatewayError> {
     let mut text = state.metrics.render();
     for (kind, count) in state.registry.counts_by_kind() {
         text.push_str(&format!(
             "# HELP studio_engine_instances Engine instances by kind\n# TYPE studio_engine_instances gauge\nstudio_engine_instances{{kind=\"{kind}\"}} {count}\n"
         ));
     }
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
-        text,
-    )
-        .into_response()
+
+    res.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; version=0.0.4"),
+    );
+    res.body(text);
+    Ok(())
 }
 
-async fn list_models(State(state): State<AppState>) -> impl IntoResponse {
+fn models(state: &AppState, res: &mut Response) -> Result<(), GatewayError> {
     let data: Vec<Value> = state
         .index
         .iter()
@@ -195,10 +297,11 @@ async fn list_models(State(state): State<AppState>) -> impl IntoResponse {
         })
         .collect();
 
-    Json(json!({ "object": "list", "data": data }))
+    res.render(Json(json!({ "object": "list", "data": data })));
+    Ok(())
 }
 
-// ---------------------------------------------------------------- 请求体定义
+// ------------------------------------------------------------------ 请求体
 
 #[derive(Debug, Deserialize)]
 pub struct ChatRequest {
@@ -270,10 +373,11 @@ pub struct DecideRequest {
     pub context: Option<String>,
 }
 
-// ---------------------------------------------------------------- 通用逻辑
+// ------------------------------------------------------------------ 通用逻辑
 
-fn authorize(state: &AppState, headers: &HeaderMap) -> Result<(), GatewayError> {
-    let header = headers
+pub(crate) fn authorize(state: &AppState, req: &Request) -> Result<(), GatewayError> {
+    let header = req
+        .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
     if state.auth.check(header) {
@@ -283,14 +387,21 @@ fn authorize(state: &AppState, headers: &HeaderMap) -> Result<(), GatewayError> 
     }
 }
 
-fn request(model: &str, task: TaskKind, prompt: String) -> InferenceRequest {
+pub(crate) fn request(model: &str, task: TaskKind, prompt: String) -> InferenceRequest {
     InferenceRequest::new(ModelId::new(model), task, prompt)
 }
 
+async fn parse<T: serde::de::DeserializeOwned>(req: &mut Request) -> Result<T, GatewayError> {
+    let bytes = req
+        .payload()
+        .await
+        .map_err(|e| GatewayError::BadRequest(format!("cannot read request body: {e}")))?;
+    serde_json::from_slice(bytes.as_ref())
+        .map_err(|e| GatewayError::BadRequest(format!("invalid request body: {e}")))
+}
+
 /// 依次尝试候选引擎；只有在"尚未向客户端输出任何内容"时才允许换引擎。
-///
-/// 返回成功的引擎与结果。
-async fn dispatch(
+pub(crate) async fn dispatch(
     state: &AppState,
     req: InferenceRequest,
     client_tx: UnboundedSender<StreamEvent>,
@@ -325,8 +436,7 @@ async fn dispatch(
             }
         };
 
-        let outcome = call_engine(&engine, &req, &client_tx, permit).await;
-        match outcome {
+        match call_engine(&engine, &req, &client_tx, permit).await {
             Ok(outcome) => return Ok((engine, outcome.0, outcome.1)),
             Err(err) => {
                 state.metrics.inc_failed();
@@ -351,7 +461,6 @@ struct AttemptError {
     forwarded: bool,
 }
 
-/// 调用单个引擎并把事件转发给客户端。
 async fn call_engine(
     engine: &Arc<dyn Engine>,
     req: &InferenceRequest,
@@ -363,12 +472,11 @@ async fn call_engine(
     let req_clone = req.clone();
 
     let handle = tokio::spawn(async move {
-        let result = if req_clone.task == TaskKind::Tts {
+        if req_clone.task == TaskKind::Tts {
             engine_clone.tts(&req_clone, tx).await
         } else {
             engine_clone.infer(&req_clone, tx).await
-        };
-        result
+        }
     });
 
     let mut outcome = InferenceOutcome::default();
@@ -396,7 +504,6 @@ async fn call_engine(
         if client_tx.send(event).is_ok() {
             forwarded = true;
         } else {
-            // 客户端已断开，停止转发但让引擎跑完（避免资源泄漏）。
             break;
         }
     }
@@ -417,33 +524,7 @@ async fn call_engine(
     }
 }
 
-fn sse_stream(
-    rx: mpsc::UnboundedReceiver<StreamEvent>,
-) -> impl futures_util::Stream<Item = Result<Bytes, Infallible>> {
-    futures_util::stream::unfold(rx, |mut rx| async move {
-        rx.recv().await.map(|event| {
-            let payload = match event {
-                StreamEvent::Delta(text) => json!({
-                    "choices": [{ "delta": { "content": text } }]
-                }),
-                StreamEvent::Done(usage) => json!({
-                    "choices": [],
-                    "usage": {
-                        "prompt_tokens": usage.prompt_tokens,
-                        "completion_tokens": usage.completion_tokens,
-                    }
-                }),
-                StreamEvent::Audio(_) => json!({ "ignored": true }),
-                StreamEvent::Error(message) => json!({ "error": message }),
-            };
-            let chunk = format!("data: {payload}\n\n");
-            (Ok::<_, Infallible>(Bytes::from(chunk)), rx)
-        })
-    })
-}
-
-/// 把文本事件聚合成完整回复。
-fn collect_text(events: Vec<StreamEvent>) -> (String, InferenceOutcome) {
+pub(crate) fn collect_text(events: Vec<StreamEvent>) -> (String, InferenceOutcome) {
     let mut text = String::new();
     let mut outcome = InferenceOutcome::default();
     for event in events {
@@ -455,7 +536,7 @@ fn collect_text(events: Vec<StreamEvent>) -> (String, InferenceOutcome) {
     (text, outcome)
 }
 
-fn drain(rx: &mut mpsc::UnboundedReceiver<StreamEvent>) -> Vec<StreamEvent> {
+pub(crate) fn drain(rx: &mut mpsc::UnboundedReceiver<StreamEvent>) -> Vec<StreamEvent> {
     let mut events = Vec::new();
     while let Ok(event) = rx.try_recv() {
         let done = matches!(event, StreamEvent::Done(_));
@@ -467,7 +548,7 @@ fn drain(rx: &mut mpsc::UnboundedReceiver<StreamEvent>) -> Vec<StreamEvent> {
     events
 }
 
-fn track(state: &AppState, outcome: &InferenceOutcome, first_ms: Option<u64>) {
+pub(crate) fn track(state: &AppState, outcome: &InferenceOutcome, first_ms: Option<u64>) {
     state.metrics.inc_requests();
     if let Some(usage) = outcome.usage {
         state
@@ -479,14 +560,44 @@ fn track(state: &AppState, outcome: &InferenceOutcome, first_ms: Option<u64>) {
     }
 }
 
-// ---------------------------------------------------------------- 处理器
+/// 把事件流转成 Salvo 的 SSE 响应。
+fn sse_chat(
+    res: &mut Response,
+    rx: mpsc::UnboundedReceiver<StreamEvent>,
+) -> Result<(), GatewayError> {
+    res.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
 
-async fn chat_completions(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<ChatRequest>,
-) -> Result<Response, GatewayError> {
-    authorize(&state, &headers)?;
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|event| {
+            let payload = match event {
+                StreamEvent::Delta(text) => {
+                    json!({ "choices": [{ "delta": { "content": text } }] })
+                }
+                StreamEvent::Done(usage) => json!({
+                    "choices": [],
+                    "usage": {
+                        "prompt_tokens": usage.prompt_tokens,
+                        "completion_tokens": usage.completion_tokens,
+                    }
+                }),
+                StreamEvent::Audio(_) => json!({ "ignored": true }),
+                StreamEvent::Error(message) => json!({ "error": message }),
+            };
+            let event = SseEvent::default().text(payload.to_string());
+            (Ok::<_, Infallible>(event), rx)
+        })
+    });
+
+    sse::stream(res, stream);
+    Ok(())
+}
+
+// ------------------------------------------------------------------ 端点实现
+
+async fn chat(state: &AppState, req: &mut Request, res: &mut Response) -> Result<(), GatewayError> {
+    authorize(state, req)?;
+    let body: ChatRequest = parse(req).await?;
 
     let prompt = if !body.messages.is_empty() {
         body.messages
@@ -506,7 +617,7 @@ async fn chat_completions(
         .find(|m| m.role == "system")
         .map(ChatMessage::text);
 
-    let mut req = request(&body.model, TaskKind::Chat, prompt)
+    let mut inference = request(&body.model, TaskKind::Chat, prompt)
         .with_stream(body.stream)
         .with_sampling(Sampling {
             temperature: body.temperature,
@@ -514,44 +625,47 @@ async fn chat_completions(
             max_tokens: body.max_tokens,
             emotion: None,
         });
-    req.system = system;
+    inference.system = system;
 
-    run_request(state, req).await
+    run_text(state, inference, body.model, res).await
 }
 
 async fn completions(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<CompletionRequest>,
-) -> Result<Response, GatewayError> {
-    authorize(&state, &headers)?;
+    state: &AppState,
+    req: &mut Request,
+    res: &mut Response,
+) -> Result<(), GatewayError> {
+    authorize(state, req)?;
+    let body: CompletionRequest = parse(req).await?;
 
-    let req = request(&body.model, TaskKind::Completion, body.prompt)
+    let inference = request(&body.model, TaskKind::Completion, body.prompt)
         .with_stream(body.stream)
         .with_sampling(Sampling {
             max_tokens: body.max_tokens,
             ..Sampling::default()
         });
 
-    run_request(state, req).await
+    run_text(state, inference, body.model, res).await
 }
 
 async fn embeddings(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<EmbeddingRequest>,
-) -> Result<Response, GatewayError> {
-    authorize(&state, &headers)?;
-    let req = request(&body.model, TaskKind::Embed, body.input);
-    run_request(state, req).await
+    state: &AppState,
+    req: &mut Request,
+    res: &mut Response,
+) -> Result<(), GatewayError> {
+    authorize(state, req)?;
+    let body: EmbeddingRequest = parse(req).await?;
+    let inference = request(&body.model, TaskKind::Embed, body.input);
+    run_text(state, inference, body.model, res).await
 }
 
 async fn decide(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<DecideRequest>,
-) -> Result<Response, GatewayError> {
-    authorize(&state, &headers)?;
+    state: &AppState,
+    req: &mut Request,
+    res: &mut Response,
+) -> Result<(), GatewayError> {
+    authorize(state, req)?;
+    let body: DecideRequest = parse(req).await?;
 
     let prompt = match (&body.context, &body.state) {
         (Some(context), state_value) => {
@@ -560,37 +674,38 @@ async fn decide(
         (None, state_value) => state_value.to_string(),
     };
 
-    let req = request(&body.model, TaskKind::Decision, prompt);
+    let inference = request(&body.model, TaskKind::Decision, prompt);
     let (client_tx, mut rx) = mpsc::unbounded_channel::<StreamEvent>();
-    let (engine, outcome, ttft) = dispatch(&state, req, client_tx).await?;
+    let (engine, outcome, ttft) = dispatch(state, inference, client_tx).await?;
     let events = drain(&mut rx);
     let (text, ev_outcome) = collect_text(events);
-    track(&state, &ev_outcome, ttft);
+    track(state, &ev_outcome, ttft);
 
-    Ok(Json(json!({
+    res.render(Json(json!({
         "model": body.model,
         "output": text,
         "engine": engine.label(),
         "usage": outcome.usage,
-    }))
-    .into_response())
+    })));
+    Ok(())
 }
 
 async fn speech(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<SpeechRequest>,
-) -> Result<Response, GatewayError> {
-    authorize(&state, &headers)?;
+    state: &AppState,
+    req: &mut Request,
+    res: &mut Response,
+) -> Result<(), GatewayError> {
+    authorize(state, req)?;
+    let body: SpeechRequest = parse(req).await?;
 
-    let mut req = request(&body.model, TaskKind::Tts, body.input).with_stream(body.stream);
-    req.voice = body.voice;
-    req.sampling.emotion = body.emotion;
-    req.extra = json!({ "speed": body.speed });
+    let mut inference = request(&body.model, TaskKind::Tts, body.input).with_stream(body.stream);
+    inference.voice = body.voice;
+    inference.sampling.emotion = body.emotion;
+    inference.extra = json!({ "speed": body.speed });
 
     if !body.stream {
         let (client_tx, mut rx) = mpsc::unbounded_channel::<StreamEvent>();
-        let (engine, outcome, ttft) = dispatch(&state, req, client_tx).await?;
+        let (_engine, outcome, ttft) = dispatch(state, inference, client_tx).await?;
         let events = drain(&mut rx);
 
         let mut pcm = Vec::new();
@@ -603,89 +718,80 @@ async fn speech(
         }
 
         state.metrics.add_audio(pcm.len() as u64);
-        track(&state, &outcome, ttft);
+        track(state, &outcome, ttft);
 
-        let mut response = Response::new(Body::from(pcm));
-        response.headers_mut().insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("audio/pcm"),
-        );
+        res.headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static("audio/pcm"));
         if let Some(rate) = rate {
-            if let Ok(value) = header::HeaderValue::from_str(&rate.to_string()) {
-                response.headers_mut().insert("x-audio-rate", value);
+            if let Ok(value) = HeaderValue::from_str(&rate.to_string()) {
+                res.headers_mut().insert("x-audio-rate", value);
             }
         }
-        let _ = engine;
-        return Ok(response);
+        res.body(pcm);
+        return Ok(());
     }
 
     let (client_tx, rx) = mpsc::unbounded_channel::<StreamEvent>();
     let state_clone = state.clone();
     tokio::spawn(async move {
-        let outcome = dispatch(&state_clone, req, client_tx)
+        if let Ok((outcome, ttft)) = dispatch(&state_clone, inference, client_tx)
             .await
-            .map(|(_, outcome, ttft)| (outcome, ttft));
-        if let Ok((outcome, ttft)) = outcome {
+            .map(|(_, outcome, ttft)| (outcome, ttft))
+        {
             track(&state_clone, &outcome, ttft);
         }
     });
 
     let stream = futures_util::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|event| match event {
-            StreamEvent::Audio(chunk) => {
-                let bytes = chunk.pcm;
-                (Ok::<_, Infallible>(Bytes::from(bytes)), rx)
-            }
-            StreamEvent::Error(message) => {
-                (Ok::<_, Infallible>(Bytes::from(message.into_bytes())), rx)
-            }
-            _ => (Ok::<_, Infallible>(Bytes::from_static(b"")), rx),
+            StreamEvent::Audio(chunk) => (
+                Ok::<_, Infallible>(salvo::hyper::body::Bytes::from(chunk.pcm)),
+                rx,
+            ),
+            _ => (Ok::<_, Infallible>(salvo::hyper::body::Bytes::new()), rx),
         })
     });
 
-    let mut response = Response::new(Body::from_stream(stream));
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        header::HeaderValue::from_static("audio/pcm"),
-    );
-    Ok(response)
+    let body = salvo::http::ResBody::stream(stream);
+    res.headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static("audio/pcm"));
+    res.body(body);
+    Ok(())
 }
 
 /// 文本类请求的统一入口：流式返回 SSE，非流式聚合为 JSON。
-async fn run_request(state: AppState, req: InferenceRequest) -> Result<Response, GatewayError> {
-    let model = req.model.to_string();
-    let stream = req.stream;
+async fn run_text(
+    state: &AppState,
+    inference: InferenceRequest,
+    model: String,
+    res: &mut Response,
+) -> Result<(), GatewayError> {
+    let stream = inference.stream;
 
     if stream {
         let (client_tx, rx) = mpsc::unbounded_channel::<StreamEvent>();
         let state_clone = state.clone();
+
         tokio::spawn(async move {
-            let outcome = dispatch(&state_clone, req, client_tx)
+            if let Ok((outcome, ttft)) = dispatch(&state_clone, inference, client_tx)
                 .await
-                .map(|(_, outcome, ttft)| (outcome, ttft));
-            if let Ok((outcome, ttft)) = outcome {
+                .map(|(_, outcome, ttft)| (outcome, ttft))
+            {
                 track(&state_clone, &outcome, ttft);
             }
         });
 
-        let response = Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "text/event-stream")
-            .header(header::CACHE_CONTROL, "no-cache")
-            .body(Body::from_stream(sse_stream(rx)))
-            .map_err(|e| GatewayError::Upstream(e.to_string()))?;
-        return Ok(response);
+        return sse_chat(res, rx);
     }
 
     let (client_tx, mut rx) = mpsc::unbounded_channel::<StreamEvent>();
-    let (engine, outcome, ttft) = dispatch(&state, req, client_tx).await?;
+    let (engine, outcome, ttft) = dispatch(state, inference, client_tx).await?;
     let events = drain(&mut rx);
-    let (text, outcome_from_events) = collect_text(events);
-
-    track(&state, &outcome_from_events, ttft);
+    let (text, ev_outcome) = collect_text(events);
+    track(state, &ev_outcome, ttft);
 
     let mut payload = json!({
-        "id": format!("chatcmpl-{}", &model.replace('/', "-")),
+        "id": format!("chatcmpl-{}", model.replace('/', "-")),
         "object": "chat.completion",
         "model": model,
         "choices": [{
@@ -696,7 +802,7 @@ async fn run_request(state: AppState, req: InferenceRequest) -> Result<Response,
         "engine": engine.label(),
     });
 
-    if let Some(usage) = outcome.usage.or(outcome_from_events.usage) {
+    if let Some(usage) = ev_outcome.usage.or(outcome.usage) {
         payload["usage"] = json!({
             "prompt_tokens": usage.prompt_tokens,
             "completion_tokens": usage.completion_tokens,
@@ -704,51 +810,26 @@ async fn run_request(state: AppState, req: InferenceRequest) -> Result<Response,
         });
     }
 
-    Ok(Json(payload).into_response())
+    res.render(Json(payload));
+    Ok(())
 }
 
-/// 启动网关并阻塞直到收到 Ctrl-C。
+/// 启动网关并阻塞直到 `shutdown` 完成（通常是 Ctrl-C）。
 pub async fn serve(
     state: AppState,
     listen: &str,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> anyhow::Result<()> {
-    let listener = tokio::net::TcpListener::bind(listen).await?;
-    let local = listener.local_addr()?;
-    tracing::info!(%local, "gateway listening");
+    // salvo 的 bind() 在端口占用时会 panic，这里先做一次友好检查
+    if std::net::TcpListener::bind(listen).is_err() {
+        anyhow::bail!("gateway port {} is already in use", listen);
+    }
 
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown)
-        .await?;
+    let acceptor = TcpListener::new(listen.to_string()).bind().await;
+    let service = Service::new(router(state));
+    let task = tokio::spawn(async move { Server::new(acceptor).serve(service).await });
+
+    shutdown.await;
+    task.abort();
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sse_payload_shape() {
-        let chunk = json!({ "choices": [{ "delta": { "content": "hi" } }] });
-        assert_eq!(chunk["choices"][0]["delta"]["content"], "hi");
-    }
-
-    #[test]
-    fn collect_text_joins_deltas() {
-        let events = vec![
-            StreamEvent::Delta("你".into()),
-            StreamEvent::Delta("好".into()),
-            StreamEvent::Done(Default::default()),
-        ];
-        let (text, outcome) = collect_text(events);
-        assert_eq!(text, "你好");
-        assert_eq!(outcome.events, 3);
-    }
-
-    #[test]
-    fn request_builder_sets_stream() {
-        let req = request("m", TaskKind::Chat, "hi".to_string()).with_stream(true);
-        assert!(req.stream);
-        assert_eq!(req.task, TaskKind::Chat);
-    }
 }

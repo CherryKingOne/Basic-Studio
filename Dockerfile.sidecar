@@ -1,6 +1,6 @@
 # sidecar 镜像：Transformers / IndexTTS 推理服务
 # 构建：docker build -f Dockerfile.sidecar -t basic-studio-sidecar:latest .
-# 运行：docker run --rm -p 9000:9000 basic-studio-sidecar:latest
+# 运行：docker run --rm -p 18596:18596 basic-studio-sidecar:latest
 
 FROM python:3.11-slim
 
@@ -20,8 +20,8 @@ RUN pip install --no-cache-dir -e .
 ARG EXTRAS=""
 RUN if [ -n "$EXTRAS" ]; then pip install --no-cache-dir ".[${EXTRAS}]"; fi
 
-EXPOSE 9000
+EXPOSE 18596
 ENV PYTHONUNBUFFERED=1
 
 ENTRYPOINT ["python", "-m", "studio_sidecar"]
-CMD ["serve", "transformers", "--host", "0.0.0.0", "--port", "9000"]
+CMD ["serve", "transformers", "--host", "0.0.0.0", "--port", "18596"]

@@ -85,7 +85,7 @@ mod tests {
         let cfg = load(None).expect("default config loads");
         assert_eq!(cfg.models.root, std::path::PathBuf::from("models"));
         assert_eq!(cfg.enabled_engines().len(), 4);
-        assert_eq!(cfg.gateway.listen, "0.0.0.0:17283");
+        assert_eq!(cfg.gateway.listen, "0.0.0.0:18596");
     }
 
     #[test]
@@ -104,7 +104,7 @@ mod tests {
         assert!(!vllm.command.is_empty());
         assert_eq!(vllm.health_path, "/health");
         // 其他引擎不受影响。
-        assert_eq!(cfg.engine(EngineKind::Sglang).unwrap().port, 30000);
+        assert_eq!(cfg.engine(EngineKind::Sglang).unwrap().port, 18596);
     }
 
     #[test]

@@ -27,7 +27,8 @@ Rust 编写的模型加载与推理统一控制面：用一套 Rust 进程纳管
 - `studio-cli`：`studio serve|models ls|models inspect|models route|engines ls|devices|doctor`
 - 根目录 Docker：`Dockerfile`、`Dockerfile.sidecar`、`docker-compose.yml`、`docker-compose.gpu.yml`
 
-服务默认端口 **17283**。
+服务默认端口 **18596**（网关、sidecar、各引擎容器统一使用该端口；同机多实例时自动递增）。
+网关基于 **Salvo** 框架（见 `.claude/skills/salvo/SKILL.md`）。
 
 尚未开始：NVML 显存预算、权重下载器、Prometheus 之外的指标后端、gRPC 多节点集群、SDK（M4~M6 的剩余项）。
 
@@ -40,20 +41,20 @@ cargo build -p studio-cli
 ./target/debug/studio models ls               # 模型清单
 ./target/debug/studio models route tts        # 路由预览
 ./target/debug/studio serve                   # 只打印启动计划
-./target/debug/studio serve --start           # 拉起引擎 + 监听 0.0.0.0:17283
+./target/debug/studio serve --start           # 拉起引擎 + 监听 0.0.0.0:18596
 ```
 
 端到端联调（无需 GPU，用内置 echo 适配器）：
 
 ```bash
-# 1) 启动 sidecar
-cd sidecars && python3 -m studio_sidecar serve transformers --port 9911
+# 1) 启动 sidecar（内部端口统一 18596）
+cd sidecars && python3 -m studio_sidecar serve transformers --port 18596
 
 # 2) 启动控制面（另一终端）
 ./target/debug/studio serve --start --config config/default.toml
 
 # 3) 调用
-curl -s localhost:17283/v1/chat/completions -H 'content-type: application/json' \
+curl -s localhost:18596/v1/chat/completions -H 'content-type: application/json' \
   -d '{"model":"<your-model-id>","messages":[{"role":"user","content":"hi"}]}'
 ```
 

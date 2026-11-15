@@ -15,7 +15,7 @@ services:
     container_name: studio
     restart: unless-stopped
     ports:
-      - "17283:17283"
+      - "18596:18596"
     volumes:
       - ./models:/models:ro
       - ./config:/app/config:ro
@@ -40,8 +40,9 @@ services:
     container_name: studio-sidecar
     profiles: ["sidecar"]
     restart: unless-stopped
-    ports:
-      - "9000:9000"
+    # 内部端口 18596，仅容器网络可见（studio 通过服务名访问）
+    expose:
+      - "18596"
     volumes:
       - ./models:/models:ro
 
@@ -56,9 +57,9 @@ services:
       - "--host"
       - "0.0.0.0"
       - "--port"
-      - "8000"
+      - "18596"
     ports:
-      - "8000:8000"
+      - "18596:18596"
     volumes:
       - ./models:/models:ro
     ipc: host
@@ -78,9 +79,9 @@ services:
       - "--host"
       - "0.0.0.0"
       - "--port"
-      - "30000"
+      - "18596"
     ports:
-      - "30000:30000"
+      - "18596:18596"
     volumes:
       - ./models:/models:ro
     ipc: host

@@ -170,7 +170,7 @@ entry = "sidecars/studio_sidecar.serve.transformers"
 adapters = { indextts_v25 = "studio_sidecar.adapters.indextts_v25" }
 
 [gateway]
-listen = "0.0.0.0:17283"
+listen = "0.0.0.0:18596"
 default_engine_policy = "prefer_local"
 
 [scheduler]
