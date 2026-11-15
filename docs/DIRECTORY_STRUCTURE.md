@@ -23,7 +23,7 @@ app/                                  # 仓库根 = Basic-Studio
 ├── docker-compose.gpu.yml              # GPU 叠加层（nvidia runtime + device 映射）
 ├── .github/workflows/                  # ci.yml(fmt clippy test) release.yml(image/binary)
 │
-├── crates/                             # ── Rust 主体（workspace members）──────────────
+├── crates/                             # ── Rust 主体（workspace members；引擎在 crates/engines/）
 ├── protos/                             # gRPC 定义（集群内部通信）
 ├── sidecars/                           # ── Python sidecar（有服务端能力缺口的引擎）────
 ├── sdk/                                # 外部客户端 SDK（薄封装）
@@ -60,10 +60,11 @@ crates/
 ├── studio-engine/          # Engine trait + 引擎注册表 + 通用 trait 实现
 │   └── src/{lib.rs, traits.rs, registry.rs, sink.rs}
 │
-│  ── 以下为各推理引擎适配器（Rust 侧，只负责协议翻译与生命周期）──
-├── engine-vllm/            # vLLM 适配器（OpenAI HTTP 透传 + 启动参数拼装）
-├── engine-sglang/          # SGLang 适配器（OpenAI + /generate）
-└── engine-transformers/    # Transformers sidecar 适配器（HTTP/WS；IndexTTS 等模型走此通道）
+├── engines/                # ── 推理引擎适配器（每个引擎一个 crate）──────────────
+│   ├── vllm/               # 包名 engine-vllm：OpenAI HTTP 透传 + 启动参数拼装
+│   ├── sglang/             # 包名 engine-sglang：OpenAI + /generate
+│   └── transformers/       # 包名 engine-transformers：sidecar（HTTP/WS），IndexTTS 走此通道
+│                           # 目录名与包名不同，Cargo.toml 中显式声明 [package] name
 │
 ├── studio-router/          # (model, task) → 引擎候选 → 打分 → 重试/故障转移
 ├── studio-scheduler/       # 准入控制、优先级队列、并发上限、取消传播、背压
@@ -88,7 +89,7 @@ studio-cli ─┐
 studio-server ─┴─▶ studio-gateway ─▶ studio-scheduler ─▶ studio-router ─▶ studio-engine
                                                                      │
                                           ┌──────────────────────┤
-                                    engine-vllm  engine-sglang  engine-transformers
+                              engines/vllm  engines/sglang  engines/transformers
                                                                      │
                                           studio-core ◀── 所有 crate（只被依赖）
 ```
@@ -99,7 +100,7 @@ studio-server ─┴─▶ studio-gateway ─▶ studio-scheduler ─▶ studio-
 
 | # | 位置 | 内容 |
 | --- | --- | --- |
-| ① 适配器 | `crates/engine-<name>/` | Rust 代码：启动参数、健康检查、协议翻译、流式转发 |
+| ① 适配器 | `crates/engines/<name>/` | Rust 代码：启动参数、健康检查、协议翻译、流式转发 |
 | ② 运行时 | `envs/<name>/`（venv）或 `sidecars/`（Python 包） | 引擎真正的代码与依赖（vLLM / SGLang / transformers） |
 | ③ 清单 | `config/engines/<name>.toml` | 启动命令模板、超时、并发、健康检查路径 |
 
@@ -107,9 +108,9 @@ studio-server ─┴─▶ studio-gateway ─▶ studio-scheduler ─▶ studio-
 
 | 引擎 | 适配器 crate | 运行时位置 | 清单文件 |
 | --- | --- | --- | --- |
-| vLLM | `crates/engine-vllm` | `envs/vllm`（pip 安装的 vllm 命令） | `config/engines/vllm.toml` |
-| SGLang | `crates/engine-sglang` | `envs/sglang`（`python -m sglang.launch_server`） | `config/engines/sglang.toml` |
-| Transformers | `crates/engine-transformers` | `sidecars/studio_sidecar/`，跑在 `envs/transformers` | `config/engines/transformers.toml` |
+| vLLM | `crates/engines/vllm`（包 `engine-vllm`） | `envs/vllm`（pip 安装的 vllm 命令） | `config/engines/vllm.toml` |
+| SGLang | `crates/engines/sglang`（包 `engine-sglang`） | `envs/sglang`（`python -m sglang.launch_server`） | `config/engines/sglang.toml` |
+| Transformers | `crates/engines/transformers`（包 `engine-transformers`） | `sidecars/studio_sidecar/`，跑在 `envs/transformers` | `config/engines/transformers.toml` |
 
 > **引擎只有上面这 3 个。** IndexTTS / Laya / Kev 是**模型**，不是引擎：
 > 它们由这些引擎加载执行。IndexTTS 属于 TTS 模型族，通过 `engine-transformers` 的 sidecar 加载，
