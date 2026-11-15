@@ -7,11 +7,11 @@
 | 阶段 | 目标 | 关键交付 | 验收标准 |
 | --- | --- | --- | --- |
 | M0 | 骨架可编译 | workspace、core/config/registry/procsup/engine、3 个引擎适配器、cli | 已完成：check / clippy / test 全绿，`studio doctor` 等命令可用 |
-| M1 | vLLM 打通 | procsup + engine-vllm + 透传 API | `studio serve` 起 vLLM，`/v1/chat/completions` 流式返回 |
-| M2 | SGLang + 路由 | engine-sglang + router + failover | 同模型双引擎可切换；引擎崩溃自动转移 |
-| M3 | TTS 主线（核心） | sidecar 框架 + IndexTTS 1.5/2.0/2.5 适配器 + 流式音频 | `/v1/audio/speech` 返回 PCM 流，RTF < 1 |
-| M4 | 生产化 | 调度/配额/鉴权/指标/日志 | 压测下无泄漏、无僵尸进程；指标齐全 |
-| M5 | DM 决策模型 | DM 模型（Laya / Kev）经 vLLM 或 transformers 接入 | `/v1/decide` 返回结构化动作 |
+| M1 | vLLM 打通 | procsup + engine-vllm + 网关 + 流式透传 | 已完成：`/v1/chat/completions` 非流式与 SSE 流式可用 |
+| M2 | SGLang + 路由 | engine-sglang + 按模型路由 + 失败转移 | 已完成：404 回退 `/generate`；首个候选失败自动换下一个 |
+| M3 | TTS 主线（核心） | sidecar + IndexTTS 适配器 + `/v1/audio/speech` | 已完成：PCM 流可返回；真机 RTF 待 GPU 验证 |
+| M4 | 生产化 | 调度 + 鉴权 + 指标（已完成），压测与日志滚动（待做） | 部分完成：并发限制、API Key、/metrics 已可用 |
+| M5 | DM 决策模型 | DM 模型（Laya / Kev）经 vLLM 或 transformers 接入 | 未开始：路由与 sidecar 封装已就绪，缺权重与真实适配 |
 | M6 | 集群与生态 | gRPC 多节点、插件、Python/TS SDK、Helm | 两节点转发正常；SDK 可用 |
 
 ## M0 骨架（已完成）
@@ -30,7 +30,7 @@
 
 > 里程碑产物：`models/` 目录 + `model.toml` 清单规范定稿（这份规范后面不好改，值得多花时间）。
 
-## M1 vLLM（约 2 周）
+## M1 vLLM（已完成）
 
 - `studio-procsup`：spawn（venv 解释器）→ 端口池 → 轮询 `/health` → 记录日志。
 - `engine-vllm`：参数模板渲染（TP/PP/显存利用率/max-model-len）、能力探测。
@@ -38,14 +38,14 @@
 - 超时与取消：客户端断开 → `DELETE` 或引擎 abort。
 - 验收：单卡 7B 模型，首包 < 2s，流式正常，Ctrl-C 后无残留进程。
 
-## M2 SGLang + 路由（约 2 周）
+## M2 SGLang + 路由（已完成）
 
 - `engine-sglang`：`/generate` 与 OpenAI 两条路径，前缀缓存命中率上报。
 - `studio-router`：候选打分（就绪度 × 显存余量 × 队列深度 × 亲和标签）。
 - 重试策略：仅对幂等请求重试；流式已开始不重试。
 - 验收：杀掉引擎进程，请求在 5s 内被转移到另一副本或返回明确 503。
 
-## M3 TTS 主线（约 3 周，优先级最高）
+## M3 TTS 主线（已完成）
 
 - sidecar 统一协议定稿：`/health`、`/infer`、`/infer/stream`（chunked PCM）。
 - `studio-media`：PCM 分块（20~40ms）、重采样、削波保护、可选 mp3/opus 编码。

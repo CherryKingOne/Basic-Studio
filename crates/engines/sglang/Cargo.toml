@@ -13,5 +13,7 @@ studio-config.workspace = true
 studio-engine.workspace = true
 studio-procsup.workspace = true
 async-trait.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true

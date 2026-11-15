@@ -94,10 +94,11 @@ studio-server ─┴─▶ studio-gateway ─▶ studio-scheduler ─▶ studio-
                                           studio-core ◀── 所有 crate（只被依赖）
 ```
 
-> M0 已实现：`studio-core`、`studio-config`、`studio-registry`、`studio-procsup`、`studio-engine`、
-> `engines/{vllm,sglang,transformers}`、`studio-router`、`studio-cli`。
-> 其余 crate（`studio-gpu` / `studio-media` / `studio-gateway` / `studio-grpc` / `studio-auth` /
-> `studio-obs` / `studio-plugin` / `studio-testkit`）为规划，按 M4~M6 落地。
+> 已实现：`studio-core`、`studio-config`、`studio-registry`、`studio-procsup`、`studio-engine`、
+> `engines/{vllm,sglang,transformers}`、`studio-router`、`studio-scheduler`、`studio-auth`、
+> `studio-obs`、`studio-media`、`studio-gateway`、`studio-cli`，以及 `sidecars/`。
+> 仍为规划：`studio-gpu`（NVML 显存预算）、`studio-storage`（权重下载）、`studio-grpc`（多节点）、
+> `studio-plugin`（插件）、`studio-testkit`（已合并进各 crate 的 dev-deps 与 `tests/`）。
 
 ## 2.1 推理引擎到底放在哪（重点）
 
@@ -281,7 +282,7 @@ app/
 | --- | --- | --- |
 | `Dockerfile` | `rust:1.x` 构建 → `ubuntu:22.04` 或 `nvidia/cuda:12.x-runtime` | `studio` / `studio-server` 二进制 + 配置 + sidecar 代码 + ffmpeg |
 | `Dockerfile.sidecar` | `nvidia/cuda:12.x-devel`（需编译）或 `python:3.11-slim` | transformers + IndexTTS 依赖（sidecar），按 build-arg 选择模型组 |
-| `docker-compose.yml` | — | `studio`（8080）+ `vllm`（8000）+ `sidecar`（9000），共享 `models/` 只读卷 |
+| `docker-compose.yml` | — | `studio`（17283）+ `vllm`（8000）+ `sidecar`（9000），共享 `models/` 只读卷 |
 | `docker-compose.gpu.yml` | — | 追加 `deploy.resources.reservations.devices`、`/dev/shm`、`ulimits` |
 
 多引擎共存策略（关键）：

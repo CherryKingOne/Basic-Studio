@@ -1,0 +1,27 @@
+# sidecar 镜像：Transformers / IndexTTS 推理服务
+# 构建：docker build -f Dockerfile.sidecar -t basic-studio-sidecar:latest .
+# 运行：docker run --rm -p 9000:9000 basic-studio-sidecar:latest
+
+FROM python:3.11-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY sidecars /app/sidecars
+WORKDIR /app/sidecars
+
+# 只装 sidecar 本体；transformers / indextts 按需安装（体积大，避免默认全量）
+RUN pip install --no-cache-dir -e .
+
+# 可选：构建时注入依赖
+#   docker build --build-arg EXTRAS=transformers ...
+ARG EXTRAS=""
+RUN if [ -n "$EXTRAS" ]; then pip install --no-cache-dir ".[${EXTRAS}]"; fi
+
+EXPOSE 9000
+ENV PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["python", "-m", "studio_sidecar"]
+CMD ["serve", "transformers", "--host", "0.0.0.0", "--port", "9000"]

@@ -1,0 +1,14 @@
+[package]
+name = "studio-scheduler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Admission control and concurrency limits for Basic-Studio"
+
+[dependencies]
+studio-core.workspace = true
+studio-config.workspace = true
+tokio.workspace = true
+tracing.workspace = true

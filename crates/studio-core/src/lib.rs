@@ -5,12 +5,14 @@
 
 pub mod engine;
 pub mod error;
+pub mod events;
 pub mod model;
 pub mod request;
 pub mod task;
 
 pub use engine::{EngineCaps, EngineKind};
 pub use error::{Error, Result};
+pub use events::{AudioChunk, InferenceOutcome, StreamEvent, Usage};
 pub use model::{ModelCard, ModelId, ModelLimits};
-pub use request::InferenceRequest;
+pub use request::{InferenceRequest, Sampling};
 pub use task::TaskKind;

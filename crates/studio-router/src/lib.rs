@@ -19,9 +19,25 @@ pub struct Selection {
 
 /// 按任务与可用引擎给出候选列表，顺序即优先级。
 pub fn select(index: &ModelIndex, task: TaskKind, available: &[EngineKind]) -> Vec<Selection> {
+    select_for(index, None, task, available)
+}
+
+/// 指定模型 id 的候选列表；`model` 为 `None` 时等价于 [`select`]。
+pub fn select_for(
+    index: &ModelIndex,
+    model: Option<&str>,
+    task: TaskKind,
+    available: &[EngineKind],
+) -> Vec<Selection> {
     let mut out = Vec::new();
 
     for card in index.by_task(task) {
+        if let Some(model) = model {
+            if card.id.as_str() != model {
+                continue;
+            }
+        }
+
         let preferred = card.preferred_engine();
         for engine in &card.engines {
             if !available.contains(engine) {

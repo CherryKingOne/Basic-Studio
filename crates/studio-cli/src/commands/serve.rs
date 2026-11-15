@@ -1,11 +1,14 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Args;
+use studio_auth::ApiKeys;
 use studio_config::{Config, EngineConfig};
 use studio_core::{EngineKind, ModelCard};
 use studio_engine::{Engine, EngineRegistry};
 use studio_registry::ModelIndex;
+use studio_scheduler::Scheduler;
 
 use crate::output::{self, table};
 
@@ -14,7 +17,7 @@ pub struct ServeArgs {
     #[arg(short, long, value_name = "PATH", env = "STUDIO_CONFIG")]
     pub config: Option<PathBuf>,
 
-    /// 真正启动引擎并阻塞；默认只打印启动计划
+    /// 不传时只打印启动计划，不拉起进程也不监听端口
     #[arg(long)]
     pub start: bool,
 
@@ -67,7 +70,7 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
     }
 
     if !args.start {
-        println!("\n  未启动（加 --start 才会真正拉起引擎进程）");
+        println!("\n  未启动（加 --start 才会拉起引擎并监听端口）");
         return Ok(());
     }
 
@@ -76,74 +79,97 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
         registry.register(engine);
     }
 
-    registry.start_all().await?;
-    println!("\n  所有引擎已就绪，Ctrl-C 停止");
-
-    if tokio::signal::ctrl_c().await.is_ok() {
-        println!("  收到停止信号，正在关闭引擎...");
+    if let Err(err) = registry.start_all().await {
+        tracing::error!(error = %err, "failed to start engines");
+        registry.shutdown_all(Duration::from_secs(10)).await;
+        return Err(err.into());
     }
+    println!("\n  引擎已就绪，网关监听 {}", cfg.gateway.listen);
+
+    let scheduler = Scheduler::new(&cfg.scheduler);
+    let auth = ApiKeys::new(cfg.gateway.api_keys.clone());
+    if auth.is_open() {
+        tracing::warn!("no api keys configured: 鉴权已关闭（仅建议本地开发）");
+    }
+
+    let state =
+        studio_gateway::AppState::new(cfg.clone(), index, registry.clone(), scheduler, auth);
+
+    let shutdown = async {
+        let _ = tokio::signal::ctrl_c().await;
+        println!("  收到停止信号，正在关闭...");
+    };
+
+    studio_gateway::serve(state, &cfg.gateway.listen, shutdown).await?;
     registry.shutdown_all(Duration::from_secs(15)).await;
     println!("  已停止");
     Ok(())
 }
 
-/// 为每个启用的引擎挑选一个模型，构造引擎实例。
+/// 每个 (模型, 引擎) 组合构造一个实例，避免多个模型共用一个引擎导致请求串台。
 ///
-/// 选择规则：优先选 `preferred_engine == kind` 的模型；否则退化为任何声明了该引擎的模型。
+/// 选择规则：遍历所有模型，凡声明了该引擎的都建实例；本地拉起时自动错开端口。
 fn build_engines(
     cfg: &Config,
     index: &ModelIndex,
     host: &str,
     log_dir: Option<PathBuf>,
-) -> anyhow::Result<Vec<Box<dyn Engine>>> {
-    let mut engines: Vec<Box<dyn Engine>> = Vec::new();
+) -> anyhow::Result<Vec<Arc<dyn Engine>>> {
+    let mut engines: Vec<Arc<dyn Engine>> = Vec::new();
 
     for kind in cfg.enabled_engines() {
-        let engine_cfg: EngineConfig = match cfg.engine(kind) {
-            Some(cfg) => cfg.clone(),
-            None => continue,
-        };
-        engine_cfg.validate(kind)?;
+        let mut spawned: usize = 0;
 
-        let card = match pick_card(index, kind) {
-            Some(card) => card,
-            None => {
-                tracing::warn!(engine = %kind, "no model declares this engine, skip instance");
-                continue;
+        for card in cards_for(index, kind) {
+            let mut engine_cfg: EngineConfig = cfg
+                .engine(kind)
+                .cloned()
+                .unwrap_or_else(|| EngineConfig::default_for(kind));
+            engine_cfg.validate(kind)?;
+
+            // 本地拉起时同一引擎的多个实例不能共用端口
+            if engine_cfg.base_url.is_none() && spawned > 0 {
+                engine_cfg.port = engine_cfg.port.saturating_add(spawned as u16);
             }
-        };
+            spawned += 1;
 
-        let engine: Box<dyn Engine> = match kind {
-            EngineKind::Vllm => Box::new(engine_vllm::VllmEngine::new(
-                engine_cfg,
-                Some(card.clone()),
-                host,
-                log_dir.clone(),
-            )),
-            EngineKind::Sglang => Box::new(engine_sglang::SglangEngine::new(
-                engine_cfg,
-                Some(card.clone()),
-                host,
-                log_dir.clone(),
-            )),
-            EngineKind::Transformers => Box::new(engine_transformers::TransformersEngine::new(
-                engine_cfg,
-                Some(card.clone()),
-                host,
-                log_dir.clone(),
-            )),
-        };
+            let engine: Arc<dyn Engine> = match kind {
+                EngineKind::Vllm => Arc::new(engine_vllm::VllmEngine::new(
+                    engine_cfg,
+                    Some(card),
+                    host,
+                    log_dir.clone(),
+                )),
+                EngineKind::Sglang => Arc::new(engine_sglang::SglangEngine::new(
+                    engine_cfg,
+                    Some(card),
+                    host,
+                    log_dir.clone(),
+                )),
+                EngineKind::Transformers => Arc::new(engine_transformers::TransformersEngine::new(
+                    engine_cfg,
+                    Some(card),
+                    host,
+                    log_dir.clone(),
+                )),
+            };
 
-        engines.push(engine);
+            engines.push(engine);
+        }
+
+        if spawned == 0 {
+            tracing::warn!(engine = %kind, "no model declares this engine, no instance created");
+        }
     }
 
     Ok(engines)
 }
 
-fn pick_card(index: &ModelIndex, kind: EngineKind) -> Option<ModelCard> {
+/// 声明了指定引擎的模型列表。
+fn cards_for(index: &ModelIndex, kind: EngineKind) -> Vec<ModelCard> {
     index
         .iter()
-        .find(|card| card.preferred_engine() == Some(kind) && card.engines.contains(&kind))
-        .or_else(|| index.iter().find(|card| card.engines.contains(&kind)))
+        .filter(|card| card.engines.contains(&kind))
         .cloned()
+        .collect()
 }

@@ -1,0 +1,16 @@
+target
+.git
+.github
+models
+envs
+*.safetensors
+*.bin
+*.gguf
+*.pt
+*.ckpt
+*.onnx
+*.wav
+*.mp3
+docs
+*.md
+!README.md

@@ -1,0 +1,43 @@
+# GPU 叠加层：
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile gpu up -d
+#
+# 前提：宿主机安装 NVIDIA Driver + nvidia-container-toolkit。
+
+services:
+  studio:
+    environment:
+      RUST_LOG: info
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  sidecar:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  vllm:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  sglang:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

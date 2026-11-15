@@ -3,7 +3,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use studio_core::{EngineCaps, EngineKind, ModelCard, Result};
+use studio_core::{
+    EngineCaps, EngineKind, InferenceOutcome, InferenceRequest, ModelCard, Result, StreamEvent,
+};
+use tokio::sync::mpsc::UnboundedSender;
 
 /// 引擎实例状态机。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,9 +63,11 @@ impl Health {
 /// 引擎适配器统一接口。
 ///
 /// 生命周期：`start` → `health`（轮询）→ `shutdown`。
-/// 推理请求的 `infer` 在 M1 加入；当前 M0 只覆盖进程生命周期与能力声明。
+/// 推理：`infer`（文本/向量/决策）与 `tts`（音频）。
+///
+/// 所有方法只要求 `&self`：内部状态用互斥量保护，便于在网关里以 `Arc<dyn Engine>` 并发调用。
 #[async_trait]
-pub trait Engine: Send {
+pub trait Engine: Send + Sync {
     fn kind(&self) -> EngineKind;
 
     /// 实例标签，用于日志与指标，形如 `vllm/tts-index-tts2.5`。
@@ -78,9 +83,29 @@ pub trait Engine: Send {
     /// 模型卡片，便于路由层读取 `task` / `adapter` / `api_version`。
     fn card(&self) -> Option<&ModelCard>;
 
-    async fn start(&mut self) -> Result<()>;
+    async fn start(&self) -> Result<()>;
 
     async fn health(&self) -> Health;
 
-    async fn shutdown(&mut self, grace: Duration) -> Result<()>;
+    async fn shutdown(&self, grace: Duration) -> Result<()>;
+
+    /// 文本/向量/决策类推理。事件通过 `tx` 实时上报。
+    async fn infer(
+        &self,
+        req: &InferenceRequest,
+        tx: UnboundedSender<StreamEvent>,
+    ) -> Result<InferenceOutcome>;
+
+    /// 语音合成。默认不支持。
+    async fn tts(
+        &self,
+        req: &InferenceRequest,
+        tx: UnboundedSender<StreamEvent>,
+    ) -> Result<InferenceOutcome> {
+        let _ = (req, tx);
+        Err(studio_core::Error::Process(format!(
+            "engine `{}` does not support tts",
+            self.kind()
+        )))
+    }
 }

@@ -44,6 +44,13 @@ impl Config {
         self.engines.get(kind.as_str())
     }
 
+    /// 可变取用，不存在时按默认值插入。
+    pub fn engine_mut(&mut self, kind: EngineKind) -> &mut EngineConfig {
+        self.engines
+            .entry(kind.as_str().to_string())
+            .or_insert_with(|| EngineConfig::default_for(kind))
+    }
+
     pub fn enabled_engines(&self) -> Vec<EngineKind> {
         EngineKind::ALL
             .into_iter()
@@ -261,12 +268,15 @@ pub struct SidecarConfig {
 #[serde(default)]
 pub struct GatewayConfig {
     pub listen: String,
+    /// 非空时开启 Bearer 鉴权；为空表示本地开发模式（不鉴权）。
+    pub api_keys: Vec<String>,
 }
 
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
             listen: "0.0.0.0:8080".to_string(),
+            api_keys: Vec::new(),
         }
     }
 }
