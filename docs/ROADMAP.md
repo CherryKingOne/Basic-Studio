@@ -67,7 +67,7 @@
 - `studio-grpc`：节点注册、心跳、跨节点转发、模型放置。
 - `studio-plugin`：子命令式引擎插件（第三方可外挂）。
 - SDK：`sdk/python`、`sdk/typescript`（薄封装，OpenAI 兼容）。
-- `deploy/helm`：HPA 按队列深度扩容。
+- `deploy/k8s/helm`：HPA 按队列深度扩容。
 - 验收：两节点下请求正确转发；插件可被动态注册。
 
 ## 横切任务（贯穿全程）

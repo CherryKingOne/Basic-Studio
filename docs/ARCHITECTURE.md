@@ -110,7 +110,9 @@ TTS 关键指标：`RTF`（实时率）、`first_chunk_ms`、`underrun` 次数�
 - 单节点：`studio serve`（1 个 Rust 进程 + N 个引擎子进程）。
 - 单机多卡：`--gpus 0,1` 与引擎 `tensor_parallel` 对齐，`studio-gpu` 做显存预算与设备钉扎。
 - 集群：控制节点跑 `studio-server`，工作节点跑 `studio-agent`，gRPC 心跳注册；路由按节点标签（GPU 型号/显存/区域）转发。
-- 容器：Rust 二进制 + 各引擎 venv 分镜像层；模型目录只读挂载。
+- 容器：Docker 文件位于**仓库根目录**（`Dockerfile` / `Dockerfile.sidecar` / `docker-compose.yml` / `docker-compose.gpu.yml` / `.dockerignore`）；
+  `studio` 与各引擎分镜像/分 service，通过 `base_url` 连接，模型目录只读挂载；
+  GPU 场景需 nvidia-container-toolkit 与 `--ipc=host`（或 `shm_size`）以支持 NCCL 共享内存。
 
 ## 7. 可靠性
 

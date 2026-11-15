@@ -16,23 +16,30 @@ app/                                  # 仓库根 = Basic-Studio
 ├── README.md
 ├── AGENTS.md
 ├── .gitignore
-├── .github/workflows/                # ci.yml(fmt clippy test) release.yml(docker/binary)
+├── .dockerignore
+├── Dockerfile                          # ★ 主镜像：Rust 构建阶段 + 运行时（含 sidecar）
+├── Dockerfile.sidecar                  # ★ sidecar 独立镜像（Python 推理引擎）
+├── docker-compose.yml                  # ★ 单机编排：studio + vllm + sglang + sidecar
+├── docker-compose.gpu.yml              # GPU 叠加层（nvidia runtime + device 映射）
+├── .github/workflows/                  # ci.yml(fmt clippy test) release.yml(image/binary)
 │
-├── crates/                           # ── Rust 主体（workspace members）──────────────
-├── bins/                             # 可执行入口（薄壳，只做参数装配）
-├── protos/                           # gRPC 定义（集群内部通信）
-├── sidecars/                         # ── Python sidecar（有服务端能力缺口的引擎）────
-├── sdk/                              # 外部客户端 SDK（薄封装）
-├── models/                           # ── 模型仓（gitignore，见 §4）─────────────────
-├── envs/                             # ── 每引擎独立 venv（gitignore）───────────────
-├── config/                           # 配置模板与引擎清单
-├── deploy/                           # 容器 / 编排
-├── scripts/                          # 运维与开发脚本
-├── docs/                             # 设计文档（本目录）
-├── tests/                            # 集成/端到端测试与 fixtures
-├── benches/                          # criterion 基准（热路径）
-└── examples/                         # 可运行的示例请求
+├── crates/                             # ── Rust 主体（workspace members）──────────────
+├── protos/                             # gRPC 定义（集群内部通信）
+├── sidecars/                           # ── Python sidecar（有服务端能力缺口的引擎）────
+├── sdk/                                # 外部客户端 SDK（薄封装）
+├── models/                             # ── 模型仓（gitignore，见 §4）─────────────────
+├── envs/                               # ── 引擎运行时环境（venv，gitignore，见 §5）────
+├── config/                             # 配置模板与引擎清单（见 §6）
+├── deploy/k8s/                         # Kubernetes（Helm chart / manifests）
+├── scripts/                            # 运维与开发脚本
+├── docs/                               # 设计文档（本目录）
+├── tests/                              # 集成/端到端测试与 fixtures
+├── benches/                            # criterion 基准（热路径）
+└── examples/                           # 可运行的示例请求
 ```
+
+> Docker 相关文件一律放**仓库根目录**：`Dockerfile`、`Dockerfile.sidecar`、`docker-compose.yml`、
+> `docker-compose.gpu.yml`、`.dockerignore`。不放 `deploy/docker/`。
 
 ## 2. `crates/`（Rust workspace，按层分组）
 
@@ -53,6 +60,7 @@ crates/
 ├── studio-engine/          # Engine trait + 引擎注册表 + 通用 trait 实现
 │   └── src/{lib.rs, traits.rs, registry.rs, sink.rs}
 │
+│  ── 以下为各推理引擎适配器（Rust 侧，只负责协议翻译与生命周期）──
 ├── engine-vllm/            # vLLM 适配器（OpenAI HTTP 透传 + 启动参数拼装）
 ├── engine-sglang/          # SGLang 适配器（OpenAI + /generate）
 ├── engine-transformers/    # Transformers sidecar 适配器（HTTP/WS）
@@ -87,6 +95,29 @@ studio-server ─┴─▶ studio-gateway ─▶ studio-scheduler ─▶ studio-
                                                                      │
                                           studio-core ◀── 所有 crate（只被依赖）
 ```
+
+## 2.1 推理引擎到底放在哪（重点）
+
+一个引擎由**三部分**组成，缺一不可：
+
+| # | 位置 | 内容 |
+| --- | --- | --- |
+| ① 适配器 | `crates/engine-<name>/` | Rust 代码：启动参数、健康检查、协议翻译、流式转发 |
+| ② 运行时 | `envs/<name>/`（venv）或 `sidecars/`（Python 包） | 引擎真正的代码与依赖（vLLM / SGLang / transformers / indextts） |
+| ③ 清单 | `config/engines/<name>.toml` | 启动命令模板、超时、并发、健康检查路径 |
+
+具体对应：
+
+| 引擎 | 适配器 crate | 运行时位置 | 清单文件 |
+| --- | --- | --- | --- |
+| vLLM | `crates/engine-vllm` | `envs/vllm`（pip 安装的 vllm 命令） | `config/engines/vllm.toml` |
+| SGLang | `crates/engine-sglang` | `envs/sglang`（`python -m sglang.launch_server`） | `config/engines/sglang.toml` |
+| Transformers | `crates/engine-transformers` | `sidecars/studio_sidecar/adapters/transformers_llm.py`，跑在 `envs/transformers` | `config/engines/transformers.toml` |
+| IndexTTS 1.0/1.5/2.0/2.5 | `crates/engine-indextts` | `sidecars/studio_sidecar/adapters/indextts_v*.py`，跑在 `envs/indextts` | `config/engines/indextts.toml` |
+| Native（candle/ort/llama.cpp） | `crates/engine-native` | **进程内**，无外部运行时 | `config/engines/native.toml` |
+| llama.cpp | `crates/engine-native`（或后续独立 crate） | `envs/llamacpp`（`llama-server` 二进制） | `config/engines/llamacpp.toml` |
+
+一句话：**Rust 里是"适配器"，`envs/` 与 `sidecars/` 里是"引擎本体"，`config/engines/` 里是"怎么启动"。**
 
 ## 3. `sidecars/`（Python 侧）
 
@@ -226,24 +257,49 @@ config/
 
 启动参数支持占位符：`{model_path}` `{port}` `{gpu_ids}` `{tensor_parallel}` `{venv}`。
 
-## 7. `deploy/`、`scripts/`、`tests/`
+## 7. Docker 部署（根目录）、`scripts/`、`tests/`
+
+Docker 相关文件**全部位于仓库根目录**：
 
 ```
-deploy/
-├── docker/
-│   ├── Dockerfile           # Rust 构建阶段 + 运行时阶段（含 sidecar 依赖）
-│   ├── Dockerfile.sidecar   # 单独的 Python sidecar 镜像
-│   └── entrypoint.sh
-├── compose/
-│   └── docker-compose.yml   # 单机：studio + vllm + sidecar
-└── k8s/
-    ├── helm/                # Chart：Deployment/Service/HPA/ConfigMap
-    └── manifests/
+app/
+├── Dockerfile                # 主镜像：Rust 多阶段构建 → 精简运行时
+├── Dockerfile.sidecar        # sidecar 镜像：Python + 各引擎依赖
+├── docker-compose.yml        # 单机编排（CPU/通用）
+├── docker-compose.gpu.yml    # GPU 叠加层：nvidia runtime、device/driver 挂载、shm
+└── .dockerignore             # 排除 target/、models/、envs/、.git 等
+```
 
+镜像划分与构建方式：
+
+| 文件 | 基础镜像 | 内容 |
+| --- | --- | --- |
+| `Dockerfile` | `rust:1.x` 构建 → `ubuntu:22.04` 或 `nvidia/cuda:12.x-runtime` | `studio` / `studio-server` 二进制 + 配置 + sidecar 代码 + ffmpeg |
+| `Dockerfile.sidecar` | `nvidia/cuda:12.x-devel`（需编译）或 `python:3.11-slim` | vLLM / SGLang / transformers / indextts 依赖，按 build-arg 选择引擎组 |
+| `docker-compose.yml` | — | `studio`（8080）+ `vllm`（8000）+ `sidecar`（9000），共享 `models/` 只读卷 |
+| `docker-compose.gpu.yml` | — | 追加 `deploy.resources.reservations.devices`、`/dev/shm`、`ulimits` |
+
+多引擎共存策略（关键）：
+
+- 每个引擎一个 Compose service，独立镜像/独立 venv，**互不共享 torch 版本**。
+- `studio` 通过 `config/engines/*.toml` 中的 `base_url`（如 `http://vllm:8000`）连接各引擎。
+- 容器内运行时统一用 `envs/` 挂载卷或镜像内 venv；`studio` 不假设引擎在同一容器。
+
+GPU 相关注意事项：
+
+- 需要 `nvidia-container-toolkit`，Compose 里 `runtime: nvidia` 或 `deploy.resources.reservations.devices`。
+- `--ipc=host`（或 `shm_size: 16gb`）：vLLM/SGLang 的 NCCL 多进程通信需要大共享内存。
+- `--ulimit memlock=-1`、`--ulimit stack=67108864`。
+- 首次启动拉权重较慢：给足 `healthcheck.start_period` 与 `startup_timeout_s`。
+
+`scripts/`、`tests/`：
+
+```
 scripts/
 ├── setup-envs.sh            # 创建各引擎 venv
 ├── fetch-models.sh          # 按 registry.toml 拉取权重（HF/ModelScope）
 ├── dev-up.sh                # 本地起 studio + 一个假引擎
+├── docker-up.sh             # docker compose --profile gpu up -d
 └── bench-tts.sh             # 批量 TTS 压测，输出 RTF
 
 tests/
