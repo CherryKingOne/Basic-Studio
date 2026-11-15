@@ -132,27 +132,29 @@ models/
 │   ├── index-tts/            # 1.0
 │   ├── index-tts1.5/
 │   ├── index-tts2.0/
-│   ├── index-tts2.5/
-│   ├── _shared/              # 共享资源：vocoder、tokenizer、参考音色库
-│   └── ref-voices/           # 用户上传的音色参考（gitignore）
+│   └── index-tts2.5/
 │
-├── DM/                       # Decision Models
-│   ├── laya/
-│   ├── kev/
-│   └── _shared/              # 共享 tokenizer / 动作空间定义
-│
+└── DM/                       # Decision Models
+    ├── laya/
+    └── kev/
+
 └── .cache/                   # 运行期产物：编译缓存、临时权重（gitignore）
 ```
 
-单个模型目录（以 `models/tts/index-tts2.0/` 为例）：
+**每个模型目录自包含**：权重、tokenizer、vocoder、音色等全部放在该模型自己的目录内，
+不存在跨模型的公共目录。好处是版本与目录一一对应，升级/回滚只需替换单个目录，模型可整体迁移或删除。
+
+单个模型目录（以 `models/tts/index-tts2.0/` 为例，所有依赖资源都在本目录内）：
 
 ```
 models/tts/index-tts2.0/
 ├── model.toml                # ★ studio 清单：引擎/资源/能力/入口（提交）
 ├── config.json               # 上游模型自带配置（提交）
 ├── *.safetensors             # 权重（gitignore）
-├── tokenizer/                # 分词器/文本正则化资源（提交小文件，大文件 ignore）
+├── tokenizer/                # 分词器 / 文本正则化资源
+├── vocoder/                  # 声码器权重
 ├── speakers/                 # 内置音色 embedding
+├── voices/                   # 用户音色参考（gitignore）
 └── CHECKSUMS.sha256          # 完整性校验（提交）
 ```
 

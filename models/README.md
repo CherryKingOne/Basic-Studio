@@ -12,24 +12,24 @@ models/
 │   ├── index-tts/       # 1.0
 │   ├── index-tts1.5/
 │   ├── index-tts2.0/
-│   ├── index-tts2.5/
-│   ├── _shared/         # 共享 vocoder / tokenizer / 文本正则资源
-│   └── ref-voices/      # 用户音色参考（忽略）
+│   └── index-tts2.5/
 └── DM/
     ├── laya/
-    ├── kev/
-    └── _shared/
+    └── kev/
 ```
 
 ## 每个模型目录必须包含
 
-| 文件 | 说明 |
+**每个模型自包含**：权重、tokenizer、vocoder、音色等全部放在该模型自己的目录内，
+不存在跨模型的公共目录。
+
+| 文件/目录 | 说明 |
 | --- | --- |
 | `model.toml` | ★ studio 清单：id、task、引擎候选、显存需求、流式能力、限流参数 |
 | `CHECKSUMS.sha256` | 权重校验和（可选，受 `checksum.policy` 控制） |
 | 权重文件 | `*.safetensors` / `*.bin` / `*.gguf` / `*.onnx`（忽略） |
 
-可选：`config.json`（上游自带）、`tokenizer/`、`speakers/`。
+可选：`config.json`（上游自带）、`tokenizer/`、`vocoder/`、`speakers/`、`voices/`（用户音色，忽略）。
 
 ## 命名规则
 
