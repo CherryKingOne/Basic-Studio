@@ -8,17 +8,23 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use salvo::prelude::*;
-use salvo::sse::{self, SseEvent};
+use axum::body::Bytes;
+use axum::extract::{Path, State};
+use axum::http::HeaderMap;
+use axum::response::sse::Event;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use studio_core::{InferenceRequest, StreamEvent, TaskKind, Usage};
 use tokio::sync::mpsc;
 
-use crate::{authorize, collect_text, dispatch, drain, request, track, AppState, GatewayError};
+use crate::{
+    authorize, collect_text, dispatch, drain, request, sse_response, track, AppState, GatewayError,
+};
 
 /// 单条已完成的响应，供 `previous_response_id` 使用。
 #[derive(Debug, Clone)]
@@ -416,7 +422,7 @@ impl StreamState {
     }
 }
 
-fn responses_sse(res: &mut Response, model: String, rx: mpsc::UnboundedReceiver<StreamEvent>) {
+fn responses_sse(model: String, rx: mpsc::UnboundedReceiver<StreamEvent>) -> Response {
     let state = StreamState {
         rx,
         response_id: new_id("resp"),
@@ -432,33 +438,29 @@ fn responses_sse(res: &mut Response, model: String, rx: mpsc::UnboundedReceiver<
     let stream = futures_util::stream::unfold(state, |mut state| async move {
         state.next_event().await.map(|(name, data)| {
             (
-                Ok::<_, Infallible>(SseEvent::default().name(name).text(data)),
+                Ok::<_, Infallible>(Event::default().event(name).data(data)),
                 state,
             )
         })
     });
 
-    sse::stream(res, stream);
+    sse_response(stream)
 }
 
 // ------------------------------------------------------------------ 处理器
 
 pub(crate) async fn create(
-    state: &AppState,
-    req: &mut Request,
-    res: &mut Response,
-) -> Result<(), GatewayError> {
-    authorize(state, req)?;
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    raw: Bytes,
+) -> Result<Response, GatewayError> {
+    authorize(&state, &headers)?;
 
-    let bytes = req
-        .payload()
-        .await
-        .map_err(|e| GatewayError::BadRequest(format!("cannot read request body: {e}")))?;
-    let body: ResponsesRequest = serde_json::from_slice(bytes.as_ref())
+    let body: ResponsesRequest = serde_json::from_slice(raw.as_ref())
         .map_err(|e| GatewayError::BadRequest(format!("invalid request body: {e}")))?;
 
     let model = body.model.clone();
-    let inference = build_request(state, &body)?;
+    let inference = build_request(&state, &body)?;
 
     if body.stream {
         let (client_tx, rx) = mpsc::unbounded_channel::<StreamEvent>();
@@ -473,15 +475,14 @@ pub(crate) async fn create(
             }
         });
 
-        responses_sse(res, model, rx);
-        return Ok(());
+        return Ok(responses_sse(model, rx));
     }
 
     let (client_tx, mut rx) = mpsc::unbounded_channel::<StreamEvent>();
-    let (engine, outcome, ttft) = dispatch(state, inference, client_tx).await?;
+    let (engine, outcome, ttft) = dispatch(&state, inference, client_tx).await?;
     let events = drain(&mut rx);
     let (text, ev_outcome) = collect_text(events);
-    track(state, &ev_outcome, ttft);
+    track(&state, &ev_outcome, ttft);
 
     let prompt_tokens = ev_outcome.usage.map(|u| u.prompt_tokens).unwrap_or(0);
     let completion_tokens = ev_outcome
@@ -502,51 +503,41 @@ pub(crate) async fn create(
         });
     }
 
-    res.render(Json(payload));
-    Ok(())
+    Ok(Json(payload).into_response())
 }
 
 pub(crate) async fn retrieve(
-    state: &AppState,
-    req: &mut Request,
-    res: &mut Response,
-) -> Result<(), GatewayError> {
-    authorize(state, req)?;
-
-    let id = req
-        .param::<String>("id")
-        .ok_or_else(|| GatewayError::BadRequest("missing response id".to_string()))?;
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, GatewayError> {
+    authorize(&state, &headers)?;
 
     let stored = state
         .responses
         .get(&id)
         .ok_or_else(|| GatewayError::BadRequest(format!("response not found: {id}")))?;
 
-    res.render(Json(json!({
+    Ok(Json(json!({
         "id": stored.id,
         "object": "response",
         "created_at": stored.created_at,
         "status": stored.status,
         "model": stored.model,
         "output_text": stored.text,
-    })));
-    Ok(())
+    }))
+    .into_response())
 }
 
 pub(crate) async fn cancel(
-    state: &AppState,
-    req: &mut Request,
-    res: &mut Response,
-) -> Result<(), GatewayError> {
-    authorize(state, req)?;
-
-    let id = req
-        .param::<String>("id")
-        .ok_or_else(|| GatewayError::BadRequest("missing response id".to_string()))?;
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, GatewayError> {
+    authorize(&state, &headers)?;
 
     let removed = state.responses.remove(&id);
-    res.render(Json(json!({ "id": id, "cancelled": removed })));
-    Ok(())
+    Ok(Json(json!({ "id": id, "cancelled": removed })).into_response())
 }
 
 /// 供文档引用的协议摘要。

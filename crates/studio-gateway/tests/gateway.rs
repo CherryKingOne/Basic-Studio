@@ -2,8 +2,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use salvo::prelude::*;
-use salvo::test::{ResponseExt, TestClient};
+use axum::body::Body;
+use axum::http::{header, Request, StatusCode};
+use axum::Router;
+use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use studio_auth::ApiKeys;
 use studio_config::{Config, EngineConfig};
@@ -16,6 +18,7 @@ use studio_gateway::{router, AppState};
 use studio_registry::ModelIndex;
 use studio_scheduler::Scheduler;
 use tokio::sync::mpsc::UnboundedSender;
+use tower::ServiceExt;
 
 struct MockEngine {
     kind: EngineKind,
@@ -122,31 +125,71 @@ fn state(api_keys: Vec<&str>) -> AppState {
     AppState::new(cfg, index, registry, scheduler, auth)
 }
 
-fn service(api_keys: Vec<&str>) -> Service {
-    Service::new(router(state(api_keys)))
+fn app(api_keys: Vec<&str>) -> Router {
+    router(state(api_keys))
 }
 
-async fn post_json(app: &Service, path: &str, body: Value) -> (Option<StatusCode>, Value) {
-    let mut response = TestClient::post(format!("http://127.0.0.1{path}"))
-        .json(&body)
-        .send(app)
-        .await;
+async fn send(app: Router, req: Request<Body>) -> (StatusCode, String) {
+    let response = app.oneshot(req).await.expect("router should respond");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body should be readable")
+        .to_bytes();
+    (status, String::from_utf8_lossy(&bytes).to_string())
+}
 
-    let status = response.status_code;
-    let body: Value = response.take_json().await.unwrap_or(Value::Null);
+fn post_body(path: &str, body: Value) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&body).expect("serialize body"),
+        ))
+        .expect("build request")
+}
+
+fn post_json_with_key(path: &str, body: Value, key: Option<&str>) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(key) = key {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {key}"));
+    }
+    builder
+        .body(Body::from(
+            serde_json::to_vec(&body).expect("serialize body"),
+        ))
+        .expect("build request")
+}
+
+async fn post_json(app: Router, path: &str, body: Value) -> (StatusCode, Value) {
+    let (status, text) = send(app, post_body(path, body)).await;
+    let body = serde_json::from_str(&text).unwrap_or(Value::Null);
     (status, body)
+}
+
+async fn get_text(app: Router, path: &str) -> (StatusCode, String) {
+    let req = Request::builder()
+        .method("GET")
+        .uri(path)
+        .body(Body::empty())
+        .expect("build request");
+    send(app, req).await
 }
 
 // ------------------------------------------------------------------ 基础端点
 
 #[tokio::test]
 async fn lists_models() {
-    let mut response = TestClient::get("http://127.0.0.1/v1/models")
-        .send(&service(vec![]))
-        .await;
+    let (status, text) = get_text(app(vec![]), "/v1/models").await;
 
-    assert_eq!(response.status_code, Some(StatusCode::OK));
-    let body: Value = response.take_json().await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_str(&text).unwrap();
     let ids: Vec<&str> = body["data"]
         .as_array()
         .unwrap()
@@ -158,17 +201,14 @@ async fn lists_models() {
 
 #[tokio::test]
 async fn health_ready_and_metrics() {
-    let app = service(vec![]);
+    let (status, _) = get_text(app(vec![]), "/healthz").await;
+    assert_eq!(status, StatusCode::OK);
 
-    let health = TestClient::get("http://127.0.0.1/healthz").send(&app).await;
-    assert_eq!(health.status_code, Some(StatusCode::OK));
+    let (status, _) = get_text(app(vec![]), "/readyz").await;
+    assert_eq!(status, StatusCode::OK);
 
-    let ready = TestClient::get("http://127.0.0.1/readyz").send(&app).await;
-    assert_eq!(ready.status_code, Some(StatusCode::OK));
-
-    let mut metrics = TestClient::get("http://127.0.0.1/metrics").send(&app).await;
-    assert_eq!(metrics.status_code, Some(StatusCode::OK));
-    let text = metrics.take_string().await.unwrap();
+    let (status, text) = get_text(app(vec![]), "/metrics").await;
+    assert_eq!(status, StatusCode::OK);
     assert!(text.contains("studio_requests_total"));
 }
 
@@ -177,30 +217,33 @@ async fn health_ready_and_metrics() {
 #[tokio::test]
 async fn chat_returns_completion() {
     let (status, body) = post_json(
-        &service(vec![]),
+        app(vec![]),
         "/v1/chat/completions",
         json!({ "model": "tts/mock", "messages": [{ "role": "user", "content": "hi" }] }),
     )
     .await;
 
-    assert_eq!(status, Some(StatusCode::OK));
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(body["choices"][0]["message"]["content"], "echo:hi");
     assert_eq!(body["usage"]["total_tokens"], 8);
 }
 
 #[tokio::test]
 async fn chat_streams_sse() {
-    let mut response = TestClient::post("http://127.0.0.1/v1/chat/completions")
-        .json(&json!({
-            "model": "tts/mock",
-            "messages": [{ "role": "user", "content": "hi" }],
-            "stream": true
-        }))
-        .send(&service(vec![]))
-        .await;
+    let (status, text) = send(
+        app(vec![]),
+        post_body(
+            "/v1/chat/completions",
+            json!({
+                "model": "tts/mock",
+                "messages": [{ "role": "user", "content": "hi" }],
+                "stream": true
+            }),
+        ),
+    )
+    .await;
 
-    assert_eq!(response.status_code, Some(StatusCode::OK));
-    let text = response.take_string().await.unwrap();
+    assert_eq!(status, StatusCode::OK);
     assert!(text.contains("data: "), "sse frames expected: {text}");
     assert!(text.contains("echo:hi"));
 }
@@ -208,47 +251,54 @@ async fn chat_streams_sse() {
 #[tokio::test]
 async fn unknown_model_returns_404() {
     let (status, body) = post_json(
-        &service(vec![]),
+        app(vec![]),
         "/v1/chat/completions",
         json!({ "model": "nope", "messages": [{ "role": "user", "content": "hi" }] }),
     )
     .await;
 
-    assert_eq!(status, Some(StatusCode::NOT_FOUND));
+    assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["error"]["type"], "model_not_found");
 }
 
 #[tokio::test]
 async fn api_key_is_enforced_when_configured() {
-    let app = service(vec!["secret"]);
+    let unauthorized = send(
+        app(vec!["secret"]),
+        post_json_with_key(
+            "/v1/chat/completions",
+            json!({ "model": "tts/mock", "messages": [] }),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(unauthorized.0, StatusCode::UNAUTHORIZED);
 
-    let unauthorized = TestClient::post("http://127.0.0.1/v1/chat/completions")
-        .json(&json!({ "model": "tts/mock", "messages": [] }))
-        .send(&app)
-        .await;
-    assert_eq!(unauthorized.status_code, Some(StatusCode::UNAUTHORIZED));
-
-    let authorized = TestClient::post("http://127.0.0.1/v1/chat/completions")
-        .add_header("Authorization", "Bearer secret", true)
-        .json(&json!({
-            "model": "tts/mock",
-            "messages": [{ "role": "user", "content": "hi" }]
-        }))
-        .send(&app)
-        .await;
-    assert_eq!(authorized.status_code, Some(StatusCode::OK));
+    let authorized = send(
+        app(vec!["secret"]),
+        post_json_with_key(
+            "/v1/chat/completions",
+            json!({
+                "model": "tts/mock",
+                "messages": [{ "role": "user", "content": "hi" }]
+            }),
+            Some("secret"),
+        ),
+    )
+    .await;
+    assert_eq!(authorized.0, StatusCode::OK);
 }
 
 #[tokio::test]
 async fn decision_endpoint_returns_json() {
     let (status, body) = post_json(
-        &service(vec![]),
+        app(vec![]),
         "/v1/decide",
         json!({ "model": "dm/mock", "state": { "hp": 10 } }),
     )
     .await;
 
-    assert_eq!(status, Some(StatusCode::OK));
+    assert_eq!(status, StatusCode::OK);
     assert!(body["output"].as_str().unwrap().contains("echo:"));
 }
 
@@ -257,13 +307,13 @@ async fn decision_endpoint_returns_json() {
 #[tokio::test]
 async fn responses_returns_structured_output() {
     let (status, body) = post_json(
-        &service(vec![]),
+        app(vec![]),
         "/v1/responses",
         json!({ "model": "tts/mock", "input": "hello", "instructions": "be brief" }),
     )
     .await;
 
-    assert_eq!(status, Some(StatusCode::OK));
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(body["object"], "response");
     assert_eq!(body["status"], "completed");
     assert_eq!(body["output"][0]["content"][0]["type"], "output_text");
@@ -274,7 +324,7 @@ async fn responses_returns_structured_output() {
 #[tokio::test]
 async fn responses_accepts_message_array() {
     let (status, body) = post_json(
-        &service(vec![]),
+        app(vec![]),
         "/v1/responses",
         json!({
             "model": "tts/mock",
@@ -286,42 +336,45 @@ async fn responses_accepts_message_array() {
     )
     .await;
 
-    assert_eq!(status, Some(StatusCode::OK));
+    assert_eq!(status, StatusCode::OK);
     assert!(body["output_text"].as_str().unwrap().contains("ping"));
 }
 
 #[tokio::test]
 async fn responses_supports_previous_response_id() {
-    let app = service(vec![]);
+    let shared = app(vec![]);
 
     let (status, first) = post_json(
-        &app,
+        shared.clone(),
         "/v1/responses",
         json!({ "model": "tts/mock", "input": "first" }),
     )
     .await;
-    assert_eq!(status, Some(StatusCode::OK));
+    assert_eq!(status, StatusCode::OK);
     let first_id = first["id"].as_str().unwrap().to_string();
     assert!(first_id.starts_with("resp_"));
 
     let (status, _second) = post_json(
-        &app,
+        shared,
         "/v1/responses",
         json!({ "model": "tts/mock", "input": "second", "previous_response_id": first_id }),
     )
     .await;
-    assert_eq!(status, Some(StatusCode::OK));
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]
 async fn responses_stream_emits_typed_events() {
-    let mut response = TestClient::post("http://127.0.0.1/v1/responses")
-        .json(&json!({ "model": "tts/mock", "input": "hi", "stream": true }))
-        .send(&service(vec![]))
-        .await;
+    let (status, text) = send(
+        app(vec![]),
+        post_body(
+            "/v1/responses",
+            json!({ "model": "tts/mock", "input": "hi", "stream": true }),
+        ),
+    )
+    .await;
 
-    assert_eq!(response.status_code, Some(StatusCode::OK));
-    let text = response.take_string().await.unwrap();
+    assert_eq!(status, StatusCode::OK);
     assert!(
         text.contains("event: response.created"),
         "missing created: {text}"
@@ -333,23 +386,28 @@ async fn responses_stream_emits_typed_events() {
 #[tokio::test]
 async fn responses_unknown_previous_id_is_rejected() {
     let (status, body) = post_json(
-        &service(vec![]),
+        app(vec![]),
         "/v1/responses",
         json!({ "model": "tts/mock", "input": "x", "previous_response_id": "resp_missing" }),
     )
     .await;
 
-    assert_eq!(status, Some(StatusCode::BAD_REQUEST));
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"]["type"], "bad_request");
 }
 
 #[tokio::test]
 async fn responses_require_auth_when_configured() {
-    let response = TestClient::post("http://127.0.0.1/v1/responses")
-        .json(&json!({ "model": "tts/mock", "input": "hi" }))
-        .send(&service(vec!["secret"]))
-        .await;
-    assert_eq!(response.status_code, Some(StatusCode::UNAUTHORIZED));
+    let (status, _) = send(
+        app(vec!["secret"]),
+        post_json_with_key(
+            "/v1/responses",
+            json!({ "model": "tts/mock", "input": "hi" }),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 // ------------------------------------------------------------------ 杂项

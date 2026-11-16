@@ -3,7 +3,7 @@
 # 运行：docker run --rm -p 18596:18596 -v $PWD/models:/models:ro basic-studio:latest
 
 # ---------------------------------------------------------------- builder
-FROM rust:1.83-slim AS builder
+FROM rust:1.93-slim AS builder
 WORKDIR /build
 
 RUN apt-get update \

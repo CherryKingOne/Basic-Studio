@@ -26,7 +26,7 @@ version = "0.0.1"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/CherryKingOne/Basic-Studio"
-rust-version = "1.75"
+rust-version = "1.80"
 
 [workspace.dependencies]
 studio-core = { path = "crates/studio-core" }
@@ -48,6 +48,7 @@ engine-transformers = { path = "crates/engines/transformers" }
 engine-llamacpp = { path = "crates/engines/llamacpp" }
 
 anyhow = "1"
+axum = "0.8"
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -59,7 +60,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3"
+http-body-util = "0.1"
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
 
 [profile.release]
 lto = "thin"
