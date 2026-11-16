@@ -29,7 +29,7 @@ Rust 编写的模型加载与推理统一控制面：用一套 Rust 进程纳管
 - SDK：Python / Rust / Node.js / Java / Go（`sdk/`，见 [sdk/README.md](sdk/README.md)）
 
 服务默认端口 **18596**（网关、sidecar、各引擎容器统一使用该端口；同机多实例时自动递增）。
-网关基于 **Salvo** 框架（见 `.claude/skills/salvo/SKILL.md`）。
+网关基于 **Axum** 框架（见 `.claude/skills/axum/SKILL.md`）。
 
 尚未开始：NVML 显存预算、权重下载器、Prometheus 之外的指标后端、gRPC 多节点集群、SDK（M4~M6 的剩余项）。
 
