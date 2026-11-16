@@ -175,6 +175,13 @@ models/
 │   ├── index-tts2.0/
 │   └── index-tts2.5/
 │
+├── llm/                      # Large Language Models
+│   ├── gemma/
+│   │   └── gemma-4-12B/
+│   └── qwen/
+│       └── Qwen/
+│           └── Qwen3.8-27B/
+│
 └── DM/                       # Decision Models
     ├── laya/
     └── kev/
@@ -219,6 +226,22 @@ sample_rate = 22050
 [checksum]
 enabled = true
 policy = "warn"                        # warn | enforce
+```
+
+LLM 模型（`models/llm/gemma/gemma-4-12B/model.toml`）示例：
+
+```toml
+id = "llm/gemma/gemma-4-12B"
+family = "gemma"
+task = "chat"
+params_b = 12
+dtype = "bfloat16"
+min_vram_gb = 24
+engine = "vllm"
+engines = ["vllm", "transformers"]       # 可降级顺序
+streaming = true
+[limits]
+max_concurrency = 4
 ```
 
 `models/registry.toml` 示例：

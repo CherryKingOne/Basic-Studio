@@ -1,0 +1,13 @@
+# 占位清单：权重文件（*.safetensors / *.bin）与本文件同目录，由 .gitignore 排除。
+id = "llm/qwen/Qwen/Qwen3.8-27B"
+family = "qwen"
+task = "chat"
+params_b = 27
+dtype = "bfloat16"
+min_vram_gb = 56
+engine = "vllm"
+engines = ["vllm", "transformers"]
+streaming = true
+
+[limits]
+max_concurrency = 4

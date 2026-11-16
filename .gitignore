@@ -3,6 +3,7 @@
 
 # 模型权重与运行时产物（只提交清单）
 /models/**
+!/models/**/
 !/models/README.md
 !/models/registry.toml
 !/models/models.lock

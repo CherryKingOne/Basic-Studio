@@ -13,6 +13,12 @@ models/
 │   ├── index-tts1.5/
 │   ├── index-tts2.0/
 │   └── index-tts2.5/
+├── llm/
+│   ├── gemma/
+│   │   └── gemma-4-12B/
+│   └── qwen/
+│       └── Qwen/
+│           └── Qwen3.8-27B/
 └── DM/
     ├── laya/
     └── kev/
@@ -36,6 +42,8 @@ models/
 - 目录名 = 模型 ID 去掉前缀后的部分；`id` 在 `model.toml` 中写全（如 `tts/index-tts2.0`）。
 - TTS 版本号统一用 `index-tts` / `index-tts1.5` / `index-tts2.0` / `index-tts2.5`，
   `api_version` 分别为 `v10` / `v15` / `v20` / `v25`。
+- LLM 模型统一放在 `llm/` 下，按 `llm/<family>/<模型名>/` 组织；上游带组织/命名空间时保留该层
+  （如 `llm/qwen/Qwen/Qwen3.8-27B`）。`id` 写全，如 `llm/gemma/gemma-4-12B`。
 - DM 目录首字母大写（`DM/`），与上游命名保持一致。
 
 ## 下载

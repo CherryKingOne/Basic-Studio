@@ -1,0 +1,13 @@
+# 占位清单：权重文件（*.safetensors / *.bin）与本文件同目录，由 .gitignore 排除。
+id = "llm/gemma/gemma-4-12B"
+family = "gemma"
+task = "chat"
+params_b = 12
+dtype = "bfloat16"
+min_vram_gb = 24
+engine = "vllm"
+engines = ["vllm", "transformers"]
+streaming = true
+
+[limits]
+max_concurrency = 4
